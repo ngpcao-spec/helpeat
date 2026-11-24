@@ -76,7 +76,9 @@ const restoredDb = 'helpeat_restore_rehearsal'
 const archived = databaseCommand(['pg_dump', '-U', 'postgres', '-d', 'postgres', '--format=custom',
   '--strict-names', '--schema=auth', '--schema=private', '--schema=public'])
 databaseCommand(['createdb', '-U', 'postgres', '--template=template0', restoredDb])
-sql(`create schema extensions;
+// The dump owns the public schema definition. Remove the empty template schema first.
+sql(`drop schema public;
+  create schema extensions;
   create extension pgcrypto with schema extensions;
   create extension "uuid-ossp" with schema extensions;`, restoredDb)
 // The stock container's local administrator can restore the managed Auth owners and grants.
