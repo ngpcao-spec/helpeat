@@ -8,7 +8,8 @@ const nav = document.querySelector('#nav')
 const dialog = document.querySelector('#dialog')
 const toast = document.querySelector('#toast')
 const search = new URLSearchParams(location.search)
-const realConfig = typeof __HELPEAT_REAL_CONFIG__ === 'undefined' ? null : __HELPEAT_REAL_CONFIG__
+const config = typeof __HELPEAT_REAL_CONFIG__ === 'undefined' ? null : __HELPEAT_REAL_CONFIG__
+const realConfig = config?.origin && config.origin !== location.origin ? null : config
 const chosenMode = realConfig && (search.get('mode') ?? localStorage.getItem('helpeat-active-mode'))
 const realMode = chosenMode === 'real'
 if (realConfig) localStorage.setItem('helpeat-active-mode', realMode ? 'real' : 'demo')

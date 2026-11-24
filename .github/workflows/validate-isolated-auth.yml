@@ -16,8 +16,6 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      HELPEAT_ISOLATED_STACK: ${{ runner.temp }}/helpeat-auth-validation
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -26,6 +24,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Set isolated stack path
+        shell: bash
+        run: |
+          echo "HELPEAT_ISOLATED_STACK=$RUNNER_TEMP/helpeat-auth-validation" >> "$GITHUB_ENV"
       - name: Start disposable Supabase
         shell: bash
         run: |

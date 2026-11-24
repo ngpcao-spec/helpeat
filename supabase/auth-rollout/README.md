@@ -18,6 +18,8 @@ Les deux fichiers SQL ci-dessous sont des migrations préparées. Ils restent ho
 
 Les tests `npm test` vérifient l’ordre des migrations, les droits de la fonction, l’absence de doublons et la conservation des organisations et adhésions. Ils exercent aussi les politiques du journal avec deux identités fixtures. Le patch HOME Reviews ajoute un nouveau compte et un compte existant à `npm exec -- playwright test --config playwright.auth.config.ts`. Ces contrôles isolés doivent être complétés par les essais de connexion Google et de PWA sur appareils physiques.
 
+Le [protocole iPhone et iPad](VALIDATION-IPHONE.md) indique comment préparer l’URL privée et tester deux comptes Google. Le workflow [Validate isolated Supabase Auth](../../.github/workflows/validate-isolated-auth.yml) lance un Supabase jetable avec de vraies sessions Auth locales et des identités fictives. Il vérifie les écritures et la persistance dans Postgres sans utiliser Google ni la production.
+
 ## Historique partagé des migrations
 
 [Le schéma Helpeat](../migrations/20261124082946_helpeat_journal_and_habits.sql) est déjà enregistré en production sous `20261124082946` et `helpeat_journal_and_habits`. Référencer ce même fichier et cette version dans le dépôt HOME Reviews avant son prochain déploiement de migrations. Cette opération aligne l’historique Git avec le projet partagé. Elle ne requiert pas de rejouer les anciennes migrations. Garder la correction Auth ci-dessus hors du chemin de déploiement automatique tant que les essais de non-régression sont incomplets.
