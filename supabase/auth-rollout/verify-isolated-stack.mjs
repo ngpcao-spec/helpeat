@@ -79,7 +79,8 @@ databaseCommand(['createdb', '-U', 'postgres', '--template=template0', restoredD
 sql(`create schema extensions;
   create extension pgcrypto with schema extensions;
   create extension "uuid-ossp" with schema extensions;`, restoredDb)
-databaseCommand(['pg_restore', '-U', 'postgres', '-d', restoredDb, '--exit-on-error', '--single-transaction'], archived)
+// The stock container's local administrator can restore the managed Auth owners and grants.
+databaseCommand(['pg_restore', '-U', 'supabase_admin', '-d', restoredDb, '--exit-on-error', '--single-transaction'], archived)
 const snapshot = `select md5(jsonb_build_object(
   'users', (select jsonb_agg(to_jsonb(entry) order by id) from auth.users entry),
   'identities', (select jsonb_agg(to_jsonb(entry) order by id) from auth.identities entry),
@@ -92,11 +93,14 @@ const snapshot = `select md5(jsonb_build_object(
   'items', (select jsonb_agg(to_jsonb(entry) order by meal_id, position) from public.helpeat_meal_items entry),
   'legacy_trigger', pg_get_triggerdef((select oid from pg_trigger
     where tgrelid = 'auth.users'::regclass and tgname = 'on_auth_user_created')),
+  'auth_owner', (select pg_get_userbyid(nspowner) from pg_namespace where nspname = 'auth'),
+  'trigger_acl', (select proacl::text from pg_proc where oid = 'private.handle_new_user()'::regprocedure),
   'policies', (select jsonb_agg(to_jsonb(entry) order by schemaname, tablename, policyname)
     from pg_policies entry where schemaname in ('public', 'private', 'auth'))
 )::text);`
 const sourceSnapshot = sql(snapshot)
 assert.match(sourceSnapshot, /^[a-f0-9]{32}$/)
+assert.equal(sql(`select count(*) from auth.identities where user_id = '${uuid(existing)}';`), '1')
 assert.equal(sql(snapshot, restoredDb), sourceSnapshot)
 assert.equal(sql(`begin;
   set local role authenticated;
