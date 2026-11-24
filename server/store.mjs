@@ -76,8 +76,9 @@ export function createStore(path) {
         do update set status = excluded.status, dishes = excluded.dishes ${condition}`,
       id, entry.date, entry.meal, entry.status, JSON.stringify(entry.dishes)).changes > 0
     },
-    deleteMeal(id, date, slot) {
-      run('delete from meals where account = ? and day = ? and slot = ?', id, date, slot)
+    deleteMeal(id, date, slot, plannedOnly = false) {
+      const query = 'delete from meals where account = ? and day = ? and slot = ?'
+      run(plannedOnly ? query + " and status = 'planned'" : query, id, date, slot)
     },
     subscribe(id, subscription) {
       run(`insert into push_subscriptions values (?, ?, ?) on conflict (endpoint)

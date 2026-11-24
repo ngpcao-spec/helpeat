@@ -8,15 +8,20 @@ const nav = document.querySelector('#nav')
 const dialog = document.querySelector('#dialog')
 const toast = document.querySelector('#toast')
 const search = new URLSearchParams(location.search)
-const locationPreference = staticDemo ? 'helpeat-demo-language' : 'helpeat-language'
-const demoApi = staticDemo ? createDemoApi(localStorage) : null
+const realConfig = typeof __HELPEAT_REAL_CONFIG__ === 'undefined' ? null : __HELPEAT_REAL_CONFIG__
+const chosenMode = realConfig && (search.get('mode') ?? localStorage.getItem('helpeat-active-mode'))
+const realMode = chosenMode === 'real'
+if (realConfig) localStorage.setItem('helpeat-active-mode', realMode ? 'real' : 'demo')
+const locationPreference = staticDemo && !realMode ? 'helpeat-demo-language' : 'helpeat-language'
+const demoApi = staticDemo && !realMode ? createDemoApi(localStorage) : null
+let realClient
 const slotIcons = { breakfast: 'sun', lunch: 'sun', dinner: 'moon' }
 const pages = { today: 'today', outing: 'group', journal: 'book', account: 'person' }
 const state = {
   locale: localStorage.getItem(locationPreference) === 'fr' ? 'fr' : 'vi',
   session: null, preferences: null, target: null, coordinates: null, locating: false,
   daily: null, exclude: [], journal: null, outing: null, outingInput: null, form: null,
-  loading: '', toastTimer: 0, dailyRequest: 0, notificationTarget: false, checkedAt: 0,
+  loading: '', toastTimer: 0, dailyRequest: 0, notificationTarget: false, checkedAt: 0, habits: null,
 }
 const t = key => translations[state.locale][key] ?? translations[state.locale].unexpected
 const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
@@ -41,6 +46,7 @@ function formatDate(date) {
 }
 
 async function api(path, method = 'GET', body) {
+  if (realClient) return realClient.api(path, method, body)
   if (demoApi) return demoApi(path, method, body)
   let response
   try {
@@ -128,11 +134,13 @@ function hero(signed) {
 }
 
 function signIn() {
-  const error = search.get('auth') === 'failed' ? t('authFailed') : ''
+  const authError = state.session.authenticationError
+  const error = authError ? t(authError)
+    : search.get('auth') === 'failed' || search.has('error') || search.has('error_code') || search.has('code') ? t('authFailed') : ''
   return hero(false) + '<section class="panel sign-in"><h2>' + t('google') + '</h2>'
     + (error ? '<p class="inline-error">' + esc(error) + '</p>' : '')
-    + (state.session.google ? '<a class="button primary" href="/auth/google">' + t('google') + '</a>'
-      : '<p>' + t('googleUnavailable') + '</p>') + '</section>'
+    + (state.session.google ? button('google', t('google'), '', 'primary')
+      : '<p>' + t('googleUnavailable') + '</p>') + '</section>' + modeLink()
 }
 
 function currentMeal() {
@@ -141,8 +149,13 @@ function currentMeal() {
   return '<aside class="panel journal-card"><span class="heading-icon">' + icon('book') + '</span>'
     + '<h2>' + t(type) + '</h2>'
     + '<p>' + (entry ? esc(entry.dishes.map(dish => dish.name).join(' · ')) : t('journalCopy')) + '</p>'
-    + (entry ? button(entry.status === 'planned' ? 'confirm-current' : 'edit-current',
-      t(entry.status === 'planned' ? 'confirm' : 'edit'), entry.status === 'planned' ? 'check' : 'book', 'primary')
+    + (entry?.status === 'planned'
+      ? '<div class="action-row">' + button('confirm-current', t('confirmYes'), 'check', 'primary',
+        !state.session.demo && entry.date > state.session.today ? 'disabled' : '')
+        + button('replace-current', t('confirmOther'), '', 'secondary',
+          !state.session.demo && entry.date > state.session.today ? 'disabled' : '')
+        + button('skip-current', t('ignore'), 'close', 'secondary') + '</div>'
+      : entry ? button('edit-current', t('edit'), 'book', 'primary')
       : button('add-current', t('add'), 'plus', 'primary'))
     + '</aside>'
 }
@@ -250,6 +263,34 @@ function outing() {
             : data.suggestions.map(place => restaurantCard(place, true)).join('')) + '</section>' : '')
 }
 
+function modeLink() {
+  if (!realConfig) return ''
+  const url = new URL(location.pathname, location.origin)
+  url.searchParams.set('mode', realMode ? 'demo' : 'real')
+  return '<a class="button secondary" href="' + esc(url.pathname + url.search) + '">'
+    + t(realMode ? 'openDemo' : 'openReal') + '</a>'
+}
+
+function habitsPanel() {
+  if (!realMode) return ''
+  const habits = state.habits
+  const list = (items, getName) => '<ul>' + items.map(item => '<li>' + esc(getName(item))
+    + ' · ' + esc(item.count) + '</li>').join('') + '</ul>'
+  let content = '<p role="status">' + t('loading') + '</p>'
+  if (habits?.error) content = '<p>' + t(habits.error) + '</p>'
+  else if (habits && !habits.dishes.length) content = '<p>' + t('habitsEmpty') + '</p>'
+  else if (habits) {
+    content = list(habits.dishes, item => item.name)
+      + (habits.families.length ? '<h3>' + t('families') + '</h3>' + list(habits.families, item => t(item.family)) : '')
+      + slots.filter(slot => habits.byMeal[slot]?.length).map(slot =>
+        '<h3>' + t(slot) + '</h3>' + list(habits.byMeal[slot], item => item.name)).join('')
+      + '<h3>' + t('recentMeals') + '</h3><ul>'
+      + habits.recent.map(meal => '<li>' + esc(formatDate(meal.date)) + ' · ' + t(meal.meal)
+        + ' · ' + esc(meal.dishes.join(', ')) + '</li>').join('') + '</ul>'
+  }
+  return '<section id="habits" class="panel form-panel"><h2>' + t('habits') + '</h2>' + content + '</section>'
+}
+
 function account() {
   const preferences = state.preferences
   const supported = Boolean(state.session.pushKey && 'PushManager' in window
@@ -265,7 +306,8 @@ function account() {
     + '</div><div class="action-row"><button class="button secondary">' + t('save') + '</button>'
     + (supported ? button('push', t(preferences.notify ? 'disablePush' : 'enablePush'), 'bell', 'primary') : '')
     + '</div></form>' + (supported ? '' : '<p class="muted">' + t(state.session.demo ? 'demoPush' : 'notifyUnavailable') + '</p>') + '</section>'
-    + (!state.session.preview ? button('logout', t('logout')) : '')
+    + habitsPanel() + '<div class="action-row">' + (!state.session.preview ? button('logout', t('logout')) : '')
+    + modeLink() + '</div>'
 }
 
 function render() {
@@ -318,6 +360,17 @@ async function loadJournal(older = false) {
     if (previous?.entries) errorMessage(error)
   }
   if (route().screen === 'journal') render()
+}
+
+async function loadHabits() {
+  if (!realMode) return
+  try {
+    state.habits = await api('habits')
+  } catch (error) {
+    state.habits = { error: error.message }
+  }
+  const panel = document.querySelector('#habits')
+  if (panel && route().screen === 'account') panel.outerHTML = habitsPanel()
 }
 
 async function savePreferences(update) {
@@ -455,6 +508,7 @@ async function finishPhoto(form, images) {
 }
 
 async function refreshAfterMeal() {
+  state.habits = null
   if (route().screen === 'journal') return loadJournal()
   if (route().screen !== 'today') location.hash = 'today'
   else await daily()
@@ -503,6 +557,7 @@ async function action(element) {
   const dish = state.daily?.suggestions?.find(item => item.id === id)
   const chosen = dish && [{ id, name: name(dish.name), family: dish.family }]
   const actions = {
+    google: () => realClient?.signIn(),
     area: areaDialog,
     position: () => geolocate(true),
     language: () => {
@@ -514,7 +569,16 @@ async function action(element) {
     refresh: () => daily(true),
     add: () => openEditor(),
     'add-current': () => openEditor(),
-    'confirm-current': () => openEditor(state.target, entry),
+    'confirm-current': async () => {
+      await api('meal', 'PUT', { ...entry, status: 'confirmed' })
+      announce(t('saved'))
+      await refreshAfterMeal()
+    },
+    'replace-current': () => openEditor(state.target, entry, [{ name: '' }]),
+    'skip-current': async () => {
+      await api('plan', 'DELETE', { date: entry.date, meal: entry.meal })
+      await refreshAfterMeal()
+    },
     'edit-current': () => openEditor(state.target, entry),
     'confirm-dish': () => {
       const existing = entry?.dishes ?? []
@@ -560,11 +624,10 @@ async function action(element) {
     close: () => dialog.close(),
     push: togglePush,
     logout: async () => {
-      const registration = await navigator.serviceWorker?.getRegistration()
-      const subscription = await registration?.pushManager?.getSubscription()
-      await api('logout', 'POST', { endpoint: subscription?.endpoint })
-      if (subscription) await subscription.unsubscribe().catch(() => {})
-      location.assign('/')
+      await api('logout', 'POST')
+      const url = new URL(location.pathname, location.origin)
+      if (realMode) url.searchParams.set('mode', 'real')
+      location.replace(url.href)
     },
   }
   if (actions[action]) await actions[action]()
@@ -681,11 +744,16 @@ window.addEventListener('hashchange', () => {
   if (screen === 'today' || (['dish', 'addresses'].includes(screen)
     && !state.daily?.suggestions?.some(item => item.id === id))) void daily()
   if (screen === 'journal') void loadJournal()
+  if (screen === 'account') void loadHabits()
 })
 
 async function initialize() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register(new URL('./sw.js', document.baseURI)).catch(() => {})
   try {
+    if (realMode) {
+      const { createRealApi } = await import('./supabase.mjs')
+      realClient = createRealApi(realConfig, new URL(location.pathname, location.origin))
+    }
     state.session = await api('session')
     if (state.session.preview && !state.session.account) {
       await api('preview', 'POST')
@@ -705,9 +773,13 @@ async function initialize() {
       state.checkedAt = Date.now()
     }
     render()
+    realClient?.watch(id => {
+      if (id !== (state.session.account?.id ?? null)) location.reload()
+    })
     if (signedIn()) {
       if (['today', 'dish', 'addresses'].includes(route().screen)) void daily()
       if (route().screen === 'journal') void loadJournal()
+      if (route().screen === 'account') void loadHabits()
       if (!state.session.demo && !state.preferences.zone && state.session.catalog === 'ready') void geolocate()
     }
   } catch (error) {
@@ -715,8 +787,8 @@ async function initialize() {
   }
 }
 
-document.addEventListener('visibilitychange', async () => {
-  if (document.hidden || !signedIn() || Date.now() - state.checkedAt < 60_000) return
+async function syncVisibleApp() {
+  if (document.hidden || !signedIn() || Date.now() - state.checkedAt < (realMode ? 8000 : 60_000)) return
   state.checkedAt = Date.now()
   try {
     const fresh = await api('session')
@@ -724,18 +796,33 @@ document.addEventListener('visibilitychange', async () => {
       location.reload()
       return
     }
+    if (realMode && fresh.account.id !== state.session.account.id) {
+      location.reload()
+      return
+    }
     const changedDay = fresh.today !== state.session.today
     state.session = fresh
-    if (!state.notificationTarget && (fresh.upcoming.date !== state.target.date || fresh.upcoming.meal !== state.target.meal)) {
+    const changedMeal = !state.notificationTarget
+      && (fresh.upcoming.date !== state.target.date || fresh.upcoming.meal !== state.target.meal)
+    if (changedMeal) {
       state.target = fresh.upcoming
       state.exclude = []
       state.daily = null
-      if (route().screen === 'today' && !dialog.open) await daily()
     }
-    if (changedDay && route().screen === 'journal' && !dialog.open) await loadJournal()
+    if ((changedMeal || realMode) && route().screen === 'today' && !dialog.open) await daily()
+    if ((changedDay || realMode) && route().screen === 'journal' && !dialog.open) await loadJournal()
+    if (realMode && route().screen === 'account' && !dialog.open) {
+      state.preferences = fresh.account.preferences
+      state.locale = state.preferences.locale
+      render()
+      await loadHabits()
+    }
   } catch {
     // Preserve the current screen while the connection recovers.
   }
-})
+}
+
+document.addEventListener('visibilitychange', syncVisibleApp)
+window.addEventListener('focus', syncVisibleApp)
 
 void initialize()

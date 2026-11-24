@@ -1,0 +1,21 @@
+diff --git a/src/app/AppContext.tsx b/src/app/AppContext.tsx
+index 3f284c4..544d56f 100644
+--- a/src/app/AppContext.tsx
++++ b/src/app/AppContext.tsx
+@@ -498,6 +498,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
+       setDataError(null)
+     }
+     try {
++    if (readyUser.current !== userId) {
++      const profile = await supabase.from('profiles').select('user_id').eq('user_id', userId).maybeSingle()
++      if (!current()) return
++      if (profile.error) throw profile.error
++      if (!profile.data) {
++        const provision = await supabase.rpc('ensure_home_user')
++        if (!current()) return
++        if (provision.error) throw provision.error
++      }
++    }
+     const [establishmentsResult, reviewsResult, notificationsResult, organizationResult, profileResult, initialImportsResult] = await Promise.all([
+       supabase.from('establishments').select('id,organization_id,name,address,google_maps_url,photo_url,rating,total_reviews,active,last_sync_at,next_sync_at,sync_status,initial_import_job_id,review_collection_status,review_collection_expected,review_collection_unique,review_collection_checked_at,review_reload_job_id,review_reload_request_id,review_reload_status,review_reload_count,review_reload_completed_at').eq('active', true).order('created_at'),
+       fetchAllReviewRows(),

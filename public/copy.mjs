@@ -52,6 +52,11 @@ export const translations = {
     demoSample: 'Dùng ảnh mẫu', demoSampleAlt: 'Ảnh minh họa phở bò dùng trong bản thử',
     demoAnalyze: 'Thử với ảnh đã chọn', secondPhoto: 'Ảnh thứ hai (không bắt buộc)',
     demoReview: 'Kiểm tra kết quả giả lập', demoReviewCopy: 'Đây là danh sách món mẫu, không phải kết quả nhận diện từ ảnh. Bạn có thể chỉnh sửa trước khi lưu.',
+    confirmYes: 'Đúng, tôi đã ăn', confirmOther: 'Tôi đã ăn món khác', ignore: 'Bỏ qua',
+    openReal: 'Mở nhật ký cá nhân', openDemo: 'Mở bản thử',
+    habits: 'Thói quen ăn uống', habitsEmpty: 'Thói quen sẽ hiện sau khi bạn ghi lại bữa đã ăn.',
+    families: 'Nhóm món ăn', recentMeals: 'Bữa ăn gần đây',
+    noodles: 'Bún, phở và mì', rice: 'Cơm, xôi và cháo', sandwich: 'Bánh mì', rolls: 'Món cuốn', soup: 'Canh và súp',
   },
   fr: {
     today: 'Aujourd’hui', outing: 'Sortie au resto', journal: 'Mes repas', account: 'Mon compte',
@@ -106,5 +111,11 @@ export const translations = {
     demoSample: 'Utiliser la photo d’exemple', demoSampleAlt: 'Photo d’illustration d’un phở au bœuf',
     demoAnalyze: 'Essayer avec la photo choisie', secondPhoto: 'Deuxième photo (facultatif)',
     demoReview: 'Vérifier le résultat simulé', demoReviewCopy: 'Cette liste prédéfinie ne provient pas d’une analyse de photo. Vous pouvez la modifier avant de l’enregistrer.',
+    confirmYes: 'Oui', confirmOther: 'J’ai mangé autre chose', ignore: 'Ignorer',
+    openReal: 'Ouvrir mon journal personnel', openDemo: 'Ouvrir la démonstration',
+    habits: 'Habitudes alimentaires', habitsEmpty: 'Tes habitudes apparaîtront après avoir confirmé des repas.',
+    families: 'Familles de plats', recentMeals: 'Repas récents',
+    noodles: 'Nouilles, bún et phở', rice: 'Riz, xôi et cháo', sandwich: 'Sandwichs et bánh mì',
+    rolls: 'Rouleaux et nems', soup: 'Soupes et bouillons',
   },
 }

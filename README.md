@@ -1,6 +1,6 @@
 # Helpeat
 
-Helpeat est une PWA indépendante pour le Vietnam. Elle propose des plats et des sorties à partir du catalogue approuvé de HOME Reviews. Le journal, les comptes et les préférences de notification sont stockés séparément dans SQLite.
+Helpeat est une PWA pour le Vietnam. La démonstration publique propose des données fictives. Le mode réel préparé utilise Supabase Auth et des tables propres à Helpeat dans le projet de HOME Reviews.
 
 ## Démonstration publique
 
@@ -26,27 +26,19 @@ Pour relancer les vérifications du serveur, exécuter `npm.cmd test`.
 
 ## Publication
 
-Le workflow officiel GitHub Pages installe les dépendances, lance les tests, compile avec Vite, puis publie l’artefact `github-pages`. La branche `main` déclenche le workflow. Les liens internes utilisent des fragments sous `/helpeat/`. Le Service Worker précache les ressources du build et remplace le cache de la démo lorsqu’une nouvelle version est déployée.
+Le workflow officiel GitHub Pages installe les dépendances, lance les tests, compile avec Vite, puis publie l’artefact `github-pages`. La branche `main` déclenche le workflow. Les liens internes utilisent des fragments sous `/helpeat/`. Le Service Worker précache les ressources du build et remplace le cache de la démo lorsqu’une nouvelle version est déployée. La publication fixe `VITE_HELPEAT_ENABLE_REAL=false`.
 
 ## Passage au mode réel
 
-GitHub Pages sert le build de démonstration statique. Pour le mode réel, héberger le serveur Node sous HTTPS, positionner `APP_ORIGIN` et configurer les variables de [.env.example](.env.example) sur l’hébergeur. Raccorder le stockage personnel à des tables Helpeat isolées dans le projet Supabase existant `ihuztjkblywzjdruusdj`, qui héberge aussi le connecteur IA. Le serveur actuel utilise SQLite pour les essais du journal et de l’authentification.
+Le navigateur utilise le projet existant `ihuztjkblywzjdruusdj`. Supabase Auth gère Google avec PKCE, l’actualisation des jetons et la fermeture de la session utilisée par Helpeat. Le journal et les préférences identifient le propriétaire par `auth.users.id` et appliquent des politiques RLS. Les modifications sont enregistrées dans Supabase et relues sur les autres appareils à l’ouverture ou au retour au premier plan. SQLite est réservé à l’ancien aperçu et aux tests locaux.
 
-| Intégration | Paramètres et comportement |
-| --- | --- |
-| Connexion Google | Configurer un client OAuth Web avec l’URI de retour `<APP_ORIGIN>/auth/google/callback`. Renseigner `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET`. L’instance exige une session Google. Elle associe le journal à l’identifiant Google stable. |
-| Catalogue | Configurer `HOME_CATALOG_URL` et, si nécessaire, `HOME_CATALOG_TOKEN`. Cette API serveur publie les données autorisées pour Helpeat. |
-| IA | Le point d’entrée `helpeat-ai` dans le projet Supabase HOME Reviews utilise `OPENAI_API_KEY` dans le même environnement serveur. Helpeat utilise `HOME_AI_BRIDGE_URL` et un jeton dédié `HELPEAT_BRIDGE_SECRET` sur son serveur. |
-| Photos | Autoriser ce parcours après vérification des règles de conservation du projet OpenAI. Configurer `HELPEAT_PHOTO_ENABLED=true` sur Helpeat et sur la fonction Supabase. Les images sont réduites dans le navigateur puis traitées en mémoire. Les requêtes utilisent `store: false`. |
-| Notifications | Configurer `WEB_PUSH_PUBLIC_KEY`, `WEB_PUSH_PRIVATE_KEY` et `WEB_PUSH_SUBJECT` sur une instance HTTPS toujours en cours d’exécution. Vérifier la réception sur les appareils cibles après autorisation du navigateur. |
+Le schéma du journal a été appliqué en production sous la version `20261124082946`. Le mode réel reste fermé au public pendant la préparation de la correction du provisionnement HOME Reviews. Le [dossier de déploiement Auth](supabase/auth-rollout/README.md) détaille les étapes et les vérifications restantes.
 
-Les horaires initiaux sont 06:00, 10:00 et 16:30, heure du Vietnam. Un clic sur une notification ouvre le repas correspondant. Un créneau absent du journal est affiché comme non renseigné. Le profil est recalculé à partir des repas confirmés des 180 derniers jours à chaque demande de suggestions. Une correction ou une suppression modifie ainsi les suggestions suivantes.
-
-Avant la mise en service réelle, vérifier la connexion Google et la conservation de l’historique après reconnexion. Consulter les conditions de traitement des images du fournisseur avant d’activer leur envoi. [Documentation OpenAI sur la conservation des données](https://developers.openai.com/api/docs/guides/your-data).
+Les horaires initiaux sont 06:00, 10:00 et 16:30, heure du Vietnam. Le calcul SQL des habitudes relit les repas confirmés des 180 derniers jours. Les modifications et suppressions se reflètent à la lecture suivante. Les recommandations du catalogue réel, la reconnaissance photo réelle et Web Push sont désactivés.
 
 ## Contrat de publication HOME Reviews
 
-L’API de catalogue répond à un GET serveur avec une enveloppe JSON contenant `source` égal à `HOME Reviews`, `version` égal à `1` et un tableau `restaurants`. La validation s’appuie sur une décision de publication dans HOME Reviews. Les menus bruts, les avis individuels, les identifiants d’organisation et les analyses privées restent dans HOME Reviews.
+Le futur point de lecture du catalogue doit renvoyer une enveloppe JSON contenant `source` égal à `HOME Reviews`, `version` égal à `1` et un tableau `restaurants`. HOME Reviews décide des données publiées. Le lecteur `approvedCatalog` impose les marqueurs `published` et `confirmed` et vérifie la date de validité de chaque association. Les menus bruts, les avis individuels, les identifiants d’organisation et les analyses privées restent dans HOME Reviews.
 
 | Objet | Informations attendues |
 | --- | --- |
@@ -65,7 +57,7 @@ Le code source de la fonction est dans [home-reviews/supabase/functions/helpeat-
 
 Lors d’un redéploiement, conserver la validation du jeton par la fonction. Configurer le jeton dédié en secret Supabase ou injecter uniquement son empreinte SHA-256 dans la configuration de déploiement. Le jeton d’accès au connecteur reste distinct de la clé OpenAI de HOME Reviews.
 
-La fonction a été déployée dans le projet HOME Reviews. Un appel authentifié avec deux candidats de test a renvoyé leurs identifiants, et l’appel sans jeton a reçu un refus HTTP 401. La reconnaissance photo est désactivée sur cette instance.
+La fonction existante demeure en place dans HOME Reviews. Le frontend actuel ne l’appelle pas. La reconnaissance photo réelle est désactivée sur cette instance.
 
 L’illustration [hero.webp](public/hero.webp) a été générée avec ImageGen à partir de ce brief.
 

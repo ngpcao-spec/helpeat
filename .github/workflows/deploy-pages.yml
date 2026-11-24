@@ -24,6 +24,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+        env:
+          VITE_HELPEAT_ENABLE_REAL: "false"
       - uses: actions/upload-pages-artifact@v4
         with:
           name: github-pages

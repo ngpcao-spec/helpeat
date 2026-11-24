@@ -116,7 +116,8 @@ export function createDemoApi(storage) {
       save({ ...data, entries: [...entries.filter(item => !matchMeal(item, body)), entry] })
       return { ok: true }
     }
-    if (path === 'meal' && method === 'DELETE') {
+    if ((path === 'meal' || path === 'plan') && method === 'DELETE') {
+      if (path === 'plan' && matching?.status !== 'planned') return { ok: true }
       save({ ...data, entries: entries.filter(item => !matchMeal(item, body)) })
       return { ok: true }
     }

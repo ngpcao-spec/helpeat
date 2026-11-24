@@ -1,11 +1,9 @@
 import { createServer } from 'node:http'
-import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { OAuth2Client } from 'google-auth-library'
 import { catalogClient, dailyCandidates, groupCandidates, inArea, label, normalize } from '../public/catalog.mjs'
-import { equal, homeAi, rank } from './home-ai.mjs'
+import { homeAi, rank } from './home-ai.mjs'
 import { configurePush, pushSubscription } from './push.mjs'
 import { createStore, token } from './store.mjs'
 import { isDate, nextMeal, slots, vietnamTime } from '../public/time.mjs'
@@ -83,6 +81,7 @@ function editableDish(item) {
 }
 
 export function buildApp(env = process.env, preview = false) {
+  if (!preview) throw new Error('The legacy server is only available in local preview')
   const host = preview ? '127.0.0.1' : env.HOST || '127.0.0.1'
   const port = Number(env.PORT || 4173)
   const origin = new URL(preview ? 'http://localhost:' + port : env.APP_ORIGIN || 'http://localhost:' + port).origin
@@ -92,13 +91,9 @@ export function buildApp(env = process.env, preview = false) {
     throw new Error('HTTPS APP_ORIGIN is required outside loopback')
   }
   const cookieName = secure ? '__Host-helpeat' : 'helpeat'
-  const stateName = secure ? '__Host-helpeat-oauth' : 'helpeat-oauth'
   const setCookie = (name, value, maxAge) => name + '=' + value + '; Path=/; HttpOnly; SameSite=Lax; Max-Age='
     + maxAge + (secure ? '; Secure' : '')
   const store = createStore(preview ? ':memory:' : resolve(env.DATABASE_PATH || './data/helpeat.sqlite'))
-  const redirectUri = origin + '/auth/google/callback'
-  const google = !preview && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET
-    ? new OAuth2Client(env.GOOGLE_CLIENT_ID, env.GOOGLE_CLIENT_SECRET, redirectUri) : null
   const getCatalog = catalogClient(preview ? '' : env.HOME_CATALOG_URL, env.HOME_CATALOG_TOKEN)
   const ai = preview ? null : homeAi(env)
   const photos = Boolean(ai && env.HELPEAT_PHOTO_ENABLED === 'true')
@@ -127,10 +122,6 @@ export function buildApp(env = process.env, preview = false) {
       response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' })
       response.end(JSON.stringify(body))
     }
-    const redirect = (url, cookies = []) => {
-      response.writeHead(303, { Location: url, 'Set-Cookie': cookies, 'Cache-Control': 'no-store' })
-      response.end()
-    }
     try {
       const url = new URL(request.url, origin)
       const { pathname } = url
@@ -139,36 +130,7 @@ export function buildApp(env = process.env, preview = false) {
         const expectedOrigin = preview ? 'http://' + request.headers.host : origin
         assert(request.headers.origin === expectedOrigin, 403, 'notAllowed')
       }
-      if (method === 'GET' && pathname === '/auth/google') {
-        assert(google, 503, 'googleUnavailable')
-        const state = token()
-        const nonce = token()
-        const verifier = token()
-        const challenge = createHash('sha256').update(verifier).digest('base64url')
-        const authorize = new URL('https://accounts.google.com/o/oauth2/v2/auth')
-        authorize.search = new URLSearchParams({
-          client_id: env.GOOGLE_CLIENT_ID, redirect_uri: redirectUri, response_type: 'code',
-          scope: 'openid profile email', state, nonce, code_challenge: challenge, code_challenge_method: 'S256',
-        })
-        return redirect(authorize.href, [setCookie(stateName, [state, nonce, verifier].join('.'), 600)])
-      }
       const session = cookie(request, cookieName)
-      if (method === 'GET' && pathname === '/auth/google/callback') {
-        const clearState = setCookie(stateName, '', 0)
-        try {
-          const [state, nonce, verifier] = cookie(request, stateName).split('.')
-          const code = url.searchParams.get('code')
-          assert(google && code && nonce && verifier && state && equal(state, url.searchParams.get('state')))
-          const { tokens } = await google.getToken({ code, codeVerifier: verifier, redirect_uri: redirectUri })
-          const ticket = await google.verifyIdToken({ idToken: tokens.id_token, audience: env.GOOGLE_CLIENT_ID })
-          const profile = ticket.getPayload()
-          assert(profile?.sub && equal(nonce, profile.nonce))
-          const newSession = store.signIn('google:' + profile.sub, text(profile.name, 100), session)
-          return redirect('/', [clearState, setCookie(cookieName, newSession, sessionAge)])
-        } catch {
-          return redirect('/?auth=failed', [clearState])
-        }
-      }
       if ((method === 'GET' || method === 'HEAD') && mime.has(pathname)) {
         let asset
         try {
@@ -184,7 +146,7 @@ export function buildApp(env = process.env, preview = false) {
       if (method === 'GET' && pathname === '/api/session') {
         const catalog = account ? await getCatalog() : null
         return send({
-          account: account && { name: account.name, preferences: account.preferences }, preview, google: Boolean(google),
+          account: account && { name: account.name, preferences: account.preferences }, preview, google: false,
           photo: photos, pushKey: push?.publicKey ?? '',
           zones: [...new Set((catalog?.restaurants ?? []).map(place => place.zone))].sort(),
           catalog: catalog?.status ?? 'unconnected', upcoming: nextMeal(), today: datePart(),
@@ -251,9 +213,9 @@ export function buildApp(env = process.env, preview = false) {
         assert(saved, 409, 'alreadyConfirmed')
         return send({ ok: true })
       }
-      if (method === 'DELETE' && pathname === '/api/meal') {
+      if (method === 'DELETE' && ['/api/meal', '/api/plan'].includes(pathname)) {
         const { date, meal } = mealKey(body)
-        store.deleteMeal(account.id, date, meal)
+        store.deleteMeal(account.id, date, meal, pathname === '/api/plan')
         return send({ ok: true })
       }
       if (method === 'PUT' && pathname === '/api/preferences') {
