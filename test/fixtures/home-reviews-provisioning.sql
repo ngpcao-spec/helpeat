@@ -9,7 +9,8 @@ grant usage on schema private to authenticated;
 create table auth.users (
   id uuid primary key,
   email text,
-  raw_user_meta_data jsonb not null default '{}'
+  raw_user_meta_data jsonb not null default '{}',
+  is_anonymous boolean not null default false
 );
 create function auth.uid() returns uuid language sql stable
   as $$ select (current_setting('request.jwt.claims', true)::jsonb->>'sub')::uuid $$;
@@ -39,6 +40,63 @@ create table public.notification_preferences (
   notification_onboarding_seen boolean not null,
   notification_permission_status text not null
 );
+
+create table public.establishments (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations,
+  name text not null
+);
+create table public.reviews (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations,
+  establishment_id uuid not null references public.establishments,
+  rating smallint not null
+);
+
+-- HOME policy predicates and table access used by the affected startup path.
+create function private.is_org_member(target uuid)
+returns boolean language sql stable security definer set search_path = ''
+as $$
+  select exists (
+    select 1 from public.organization_members where organization_id = target and user_id = (select auth.uid())
+  );
+$$;
+create function private.has_org_role(target uuid, allowed_roles text[])
+returns boolean language sql stable security definer set search_path = ''
+as $$
+  select exists (
+    select 1 from public.organization_members
+    where organization_id = target and user_id = (select auth.uid()) and role = any(allowed_roles)
+  );
+$$;
+
+alter table public.profiles enable row level security;
+alter table public.organizations enable row level security;
+alter table public.organization_members enable row level security;
+alter table public.establishments enable row level security;
+alter table public.reviews enable row level security;
+alter table public.notification_preferences enable row level security;
+grant select, update on public.profiles, public.organizations, public.establishments to authenticated;
+grant select on public.organization_members, public.reviews, public.notification_preferences to authenticated;
+
+create policy profiles_select_own on public.profiles for select to authenticated using (user_id = (select auth.uid()));
+create policy profiles_update_own on public.profiles for update to authenticated
+  using (user_id = (select auth.uid())) with check (user_id = (select auth.uid()));
+create policy organizations_select on public.organizations for select to authenticated
+  using ((select private.is_org_member(id)));
+create policy organizations_update on public.organizations for update to authenticated
+  using ((select private.has_org_role(id, array['owner', 'admin'])))
+  with check ((select private.has_org_role(id, array['owner', 'admin'])));
+create policy organization_members_select on public.organization_members for select to authenticated
+  using ((select private.is_org_member(organization_id)));
+create policy establishments_select on public.establishments for select to authenticated
+  using ((select private.is_org_member(organization_id)));
+create policy establishments_update on public.establishments for update to authenticated
+  using ((select private.has_org_role(organization_id, array['owner', 'admin', 'manager'])))
+  with check ((select private.has_org_role(organization_id, array['owner', 'admin', 'manager'])));
+create policy reviews_select on public.reviews for select to authenticated using ((select private.is_org_member(organization_id)));
+create policy notification_preferences_select_own on public.notification_preferences for select to authenticated
+  using (user_id = (select auth.uid()));
 
 -- Mirrors the current production helper. Keep the initial default EXECUTE
 -- privilege so that the test verifies that phase 1 removes it.

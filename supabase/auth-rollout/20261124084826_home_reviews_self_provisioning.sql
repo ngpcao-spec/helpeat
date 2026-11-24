@@ -20,7 +20,9 @@ declare
   caller_id uuid := auth.uid();
   existing_organization_id uuid;
 begin
-  if caller_id is null then
+  if caller_id is null or not exists (
+    select 1 from auth.users where id = caller_id and not is_anonymous
+  ) then
     raise exception 'AUTH_REQUIRED' using errcode = '42501';
   end if;
 

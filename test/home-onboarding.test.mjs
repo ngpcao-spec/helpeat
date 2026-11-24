@@ -5,7 +5,7 @@ import { PGlite } from '@electric-sql/pglite'
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8')
 const phaseOne = () => read('../supabase/auth-rollout/20261124084826_home_reviews_self_provisioning.sql')
-const phaseTwo = () => read('../supabase/auth-rollout/20261124082045_helpeat_auth_defer_home_review_provisioning.sql')
+const phaseTwo = () => read('../supabase/auth-rollout/20261124102903_separate_helpeat_signup.sql')
 const owner = 'aaaaaaaa-1111-4000-8000-000000000001'
 const legacySignup = 'bbbbbbbb-1111-4000-8000-000000000002'
 const newHelpeat = 'cccccccc-1111-4000-8000-000000000003'
@@ -63,6 +63,7 @@ test('phase one narrows execution privileges and preserves the existing signup t
   await asRole('anon', null, () => assert.rejects(ensure(), { code: '42501' }))
   await asRole('service_role', null, () => assert.rejects(ensure(), { code: '42501' }))
   await asRole('authenticated', null, () => assert.rejects(ensure(), { message: 'AUTH_REQUIRED' }))
+  await asRole('authenticated', legacySignup, () => assert.rejects(ensure(), { message: 'AUTH_REQUIRED' }))
   await asRole('authenticated', owner, async () => {
     await assert.rejects(query('select public.ensure_home_user($1::uuid)', [legacySignup]), { code: '42883' })
     assert.equal(await ensure(), retainedOrganization.id)
@@ -74,11 +75,13 @@ test('phase one narrows execution privileges and preserves the existing signup t
   assert.equal((await profile(legacySignup)).length, 1)
 })
 
-test('after phase two a HELPEAT signup creates no restaurant data and explicit HOME onboarding is idempotent', async () => {
+test('after phase two signup creates a minimal shared profile and explicit HOME onboarding is idempotent', async () => {
   await db.exec(await phaseTwo())
   await addUser(newHelpeat, 'Nouveau compte')
   assert.deepEqual(await organizations(newHelpeat), [])
-  assert.deepEqual(await profile(newHelpeat), [])
+  assert.deepEqual(await rows('select user_id, display_name, email, avatar_url from public.profiles where user_id=$1', [newHelpeat]),
+    [{ user_id: newHelpeat, display_name: 'Nouveau compte', email: null, avatar_url: null }])
+  assert.deepEqual(await rows('select user_id from public.organization_members where user_id=$1', [newHelpeat]), [])
   assert.deepEqual(await rows('select user_id from public.notification_preferences where user_id=$1', [newHelpeat]), [])
   const first = await asRole('authenticated', newHelpeat, ensure)
   assert.equal(await asRole('authenticated', newHelpeat, ensure), first)
@@ -100,4 +103,23 @@ test('invited members keep their role and revoked access is not restored', async
   await asRole('authenticated', legacySignup, () => assert.rejects(ensure(), { message: 'HOME_MEMBERSHIP_REQUIRED' }))
   assert.deepEqual(await rows('select role from public.organization_members where user_id=$1', [legacySignup]), [])
   assert.equal((await organizations(legacySignup)).length, 1)
+})
+
+test('an anonymous Auth account cannot provision a restaurant even with the authenticated database role', async () => {
+  const guest = 'ffffffff-1111-4000-8000-000000000006'
+  await query('insert into auth.users (id, is_anonymous) values ($1, true)', [guest])
+  await asRole('authenticated', guest, () => assert.rejects(ensure(), { message: 'AUTH_REQUIRED' }))
+  assert.deepEqual(await organizations(guest), [])
+})
+
+test('the trigger rollback restores legacy signup and retains the secure RPC, profiles and memberships', async () => {
+  const newId = 'eeeeeeee-1111-4000-8000-000000000005'
+  const profileBefore = await profile(newHelpeat)
+  await db.exec(await read('../supabase/auth-rollout/rollback-trigger.sql'))
+  await addUser(newId, 'Parcours historique rétabli')
+  assert.equal((await organizations(newId)).length, 1)
+  assert.equal(await asRole('authenticated', newId, ensure), (await organizations(newId))[0].id)
+  assert.deepEqual(await organizations(owner), [retainedOrganization])
+  assert.deepEqual(await profile(newHelpeat), profileBefore)
+  assert.equal((await rows("select has_function_privilege('authenticated', 'private.provision_home_user(uuid)', 'EXECUTE') as legacy"))[0].legacy, false)
 })
