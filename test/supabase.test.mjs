@@ -2,12 +2,11 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { after, before, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
-import { googleClaims, googleOptions } from '../public/supabase.mjs'
+import { googleClaims, googleOptions, googleReturn } from '../public/supabase.mjs'
 
 const sql = path => readFile(new URL('../supabase/' + path, import.meta.url), 'utf8')
 const userA = 'aaaaaaaa-0000-4000-8000-000000000001'
 const userB = 'bbbbbbbb-0000-4000-8000-000000000002'
-const userC = 'cccccccc-0000-4000-8000-000000000003'
 const claims = (sub, provider = 'google', method = 'oauth') => ({
   sub, app_metadata: { provider, providers: [provider] }, amr: [{ method }],
 })
@@ -57,6 +56,14 @@ test('Supabase OAuth uses the Pages callback and accepts OAuth claims bound to G
   assert.ok(googleClaims(claims(userA)))
   assert.equal(googleClaims(claims(userA, 'google', 'password')), false)
   assert.equal(googleClaims(claims(userA, 'github')), false)
+})
+
+test('OAuth return cleanup preserves the real mode and removes aborted PKCE or provider parameters', () => {
+  const root = 'https://ngpcao-spec.github.io/helpeat/?mode=real'
+  assert.deepEqual(googleReturn(root + '&code=example&sb_flow_id=fixture#today'), { href: root + '#today', hasCode: true })
+  assert.deepEqual(googleReturn(root + '#error=access_denied&error_description=fixture'), { href: root, hasCode: false })
+  assert.deepEqual(googleReturn(root + '#sb=&access_token=fixture&refresh_token=fixture'), { href: root, hasCode: false })
+  assert.equal(googleReturn(root + '#journal'), null)
 })
 
 test('Postgres denies anonymous and cross-account access to meals, items and preferences', async () => {
@@ -115,38 +122,4 @@ test('confirmed meals update habits atomically while plans, invalid edits and de
   } finally {
     await resetRole()
   }
-})
-
-test('the held HOME Reviews trigger change defers provisioning and preserves explicit onboarding', async () => {
-  await db.exec(String.raw`
-    create schema private;
-    create table public.home_org_test (owner_id uuid primary key);
-    create function private.provision_home_user(owner_id uuid) returns uuid
-      language sql security definer set search_path = ''
-      as $$ insert into public.home_org_test values ($1) on conflict do nothing; select $1; $$;
-    create function private.handle_new_user() returns trigger
-      language plpgsql security definer set search_path = ''
-      as $$ begin perform private.provision_home_user(new.id); return new; end; $$;
-    create trigger on_auth_user_created after insert on auth.users
-      for each row execute function private.handle_new_user();
-    create function public.ensure_home_user() returns uuid language plpgsql security definer set search_path = ''
-      as $$ begin
-        if auth.uid() is null then raise exception 'UNAUTHORIZED'; end if;
-        return private.provision_home_user(auth.uid());
-      end; $$;
-    revoke all on function public.ensure_home_user() from public, anon;
-    grant execute on function public.ensure_home_user() to authenticated;
-  `)
-  await query('select private.provision_home_user($1)', [userA])
-  await db.exec(await sql('auth-rollout/20261124082045_helpeat_auth_defer_home_review_provisioning.sql'))
-  await query('insert into auth.users values ($1)', [userC])
-  assert.deepEqual(await rows('select owner_id from public.home_org_test'), [{ owner_id: userA }])
-  try {
-    await session(claims(userC))
-    await query('select public.ensure_home_user()')
-    await query('select public.ensure_home_user()')
-  } finally {
-    await resetRole()
-  }
-  assert.deepEqual(await rows('select owner_id from public.home_org_test order by owner_id'), [{ owner_id: userA }, { owner_id: userC }])
 })

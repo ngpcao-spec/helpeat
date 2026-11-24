@@ -749,12 +749,20 @@ window.addEventListener('hashchange', () => {
 
 async function initialize() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register(new URL('./sw.js', document.baseURI)).catch(() => {})
+  let callback
   try {
     if (realMode) {
-      const { createRealApi } = await import('./supabase.mjs')
+      const { createRealApi, googleReturn } = await import('./supabase.mjs')
+      callback = googleReturn(location.href)
       realClient = createRealApi(realConfig, new URL(location.pathname, location.origin))
     }
     state.session = await api('session')
+    if (callback) {
+      history.replaceState(history.state, '', callback.href)
+      if (!state.session.account && !state.session.authenticationError) {
+        state.session.authenticationError = callback.hasCode ? 'authRestart' : 'authFailed'
+      }
+    }
     if (state.session.preview && !state.session.account) {
       await api('preview', 'POST')
       state.session = await api('session')
@@ -783,7 +791,10 @@ async function initialize() {
       if (!state.session.demo && !state.preferences.zone && state.session.catalog === 'ready') void geolocate()
     }
   } catch (error) {
-    main.innerHTML = empty('bowl', t(error.message), '') + '<a class="button secondary" href="/">' + t('retry') + '</a>'
+    if (callback) history.replaceState(history.state, '', callback.href)
+    const retry = esc(location.pathname + (realMode ? '?mode=real' : ''))
+    main.innerHTML = empty('bowl', t(error.message), '')
+      + '<a class="button secondary" href="' + retry + '">' + t('retry') + '</a>'
   }
 }
 

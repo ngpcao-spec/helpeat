@@ -28,6 +28,22 @@ export function googleOptions(base) {
   return { redirectTo: redirect.href, queryParams: { prompt: 'select_account' } }
 }
 
+export function googleReturn(href) {
+  const url = new URL(href)
+  const fragment = new URLSearchParams(url.hash.slice(1))
+  const isProviderReturn = parameters => ['code', 'sb', 'error', 'error_code', 'access_token', 'refresh_token']
+    .some(key => parameters.has(key))
+  const hasCode = url.searchParams.has('code') || fragment.has('code')
+  const hasProviderFragment = isProviderReturn(fragment)
+  if (!hasProviderFragment && !isProviderReturn(url.searchParams)) return null
+  for (const key of ['code', 'sb', 'sb_flow_id', 'error', 'error_code', 'error_description', 'type',
+    'access_token', 'refresh_token', 'provider_token', 'provider_refresh_token', 'token_type', 'expires_in', 'expires_at']) {
+    url.searchParams.delete(key)
+  }
+  if (hasProviderFragment) url.hash = ''
+  return { href: url.href, hasCode }
+}
+
 function mapMeal(row) {
   return {
     date: row.meal_date, meal: row.meal_slot, status: row.status,
