@@ -1,14 +1,16 @@
 # Séparation des inscriptions HOME Reviews et Helpeat
 
-## Audit de production
+## Audit avant la première migration
 
 Les deux applications utilisent Supabase `ihuztjkblywzjdruusdj` et la même identité dans `auth.users`. Le trigger `on_auth_user_created` appelle actuellement `private.handle_new_user()`, qui crée le profil, une organisation, son adhésion de propriétaire et des préférences de notification via `private.provision_home_user(uuid)`.
 
-La RPC `public.ensure_home_user()` est absente. Le helper historique accepte un UUID et les rôles `anon` et `authenticated` héritent encore du droit SQL de l’exécuter. Le correctif retire ces droits. Les politiques RLS de production réservent les profils à leur propriétaire et les organisations, adhésions, établissements et avis à leurs membres. Les modifications d’organisations et d’établissements restent soumises aux rôles existants.
+La RPC `public.ensure_home_user()` était absente. Le helper historique accepte un UUID et les rôles `anon` et `authenticated` héritaient du droit SQL de l’exécuter. Le correctif retire ces droits. Les politiques RLS de production réservent les profils à leur propriétaire et les organisations, adhésions, établissements et avis à leurs membres. Les modifications d’organisations et d’établissements restent soumises aux rôles existants.
 
 ## Déploiement progressif
 
 Les scripts restent hors de `supabase/migrations`. Les appliquer individuellement, dans l’ordre ci-dessous, en enregistrant leur version dans l’historique Supabase. La migration Helpeat `20261124082946` est déjà enregistrée en production. La [branche d’alignement HOME Reviews](https://github.com/ngpcao-spec/home-reviews-demo/tree/codex/helpeat-journal-history) contient sa copie pour l’historique partagé.
+
+La phase 1 est appliquée en production. Supabase a enregistré `home_reviews_self_provisioning` sous la version `20261124162149` à partir du fichier validé `20261124084826_home_reviews_self_provisioning.sql`. Utiliser la version enregistrée pour l’alignement de l’historique partagé et reprendre la procédure à la publication du patch HOME Reviews. La restauration d’une sauvegarde réelle reste à vérifier.
 
 1. Avant toute modification de production, identifier un point de récupération récent couvrant les données applicatives et Auth. En l’absence de sauvegarde gérée, exporter les rôles, le schéma et les données suivant la procédure Supabase avec un accès Postgres préexistant. Conserver les fichiers et leurs empreintes SHA‑256 sur un stockage protégé. Restaurer dans une instance isolée et protégée, vérifier `auth.users`, `auth.identities`, les profils, adhésions, établissements, avis et repas, ainsi que le trigger et les politiques RLS. Consigner le point de récupération, l’heure de la restauration, ses résultats et le commit HOME Reviews de retour arrière. Garder les données de production dans l’environnement protégé. [Vérifier les sauvegardes Supabase](https://supabase.com/docs/guides/platform/backups) · [Exporter et restaurer avec la CLI](https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore)
 2. Appliquer [le provisionnement sécurisé](20261124084826_home_reviews_self_provisioning.sql). La RPC utilise exclusivement `auth.uid()`, n’accepte aucun argument et refuse les sessions anonymes. Elle conserve les adhésions existantes, refuse de rétablir une adhésion retirée et sérialise les premières initialisations par utilisateur. Le trigger historique reste actif pendant cette phase. Contrôler les droits effectifs et l’absence du schéma privilégié `home_reviews_onboarding` dans les schémas exposés par la Data API.
