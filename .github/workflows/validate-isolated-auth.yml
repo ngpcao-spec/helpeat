@@ -1,0 +1,54 @@
+name: Validate isolated Supabase Auth
+
+on:
+  push:
+    branches: [codex/helpeat-google-auth-validation]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helpeat-isolated-auth
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HELPEAT_ISOLATED_STACK: ${{ runner.temp }}/helpeat-auth-validation
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Start disposable Supabase
+        shell: bash
+        run: |
+          mkdir -p "$HELPEAT_ISOLATED_STACK/supabase"
+          cp test/fixtures/isolated-supabase.toml "$HELPEAT_ISOLATED_STACK/supabase/config.toml"
+          cp test/fixtures/isolated-auth-claims.sql "$HELPEAT_ISOLATED_STACK/supabase/seed.sql"
+          cd "$HELPEAT_ISOLATED_STACK"
+          npx --yes supabase@2.118.0 start -x realtime,storage-api,imgproxy,mailpit,postgres-meta,studio,edge-runtime,logflare,vector,supavisor > "$RUNNER_TEMP/helpeat-isolated-start.log" 2>&1
+          npx --yes supabase@2.118.0 status -o json > "$HELPEAT_ISOLATED_STACK/status.json"
+      - name: Verify onboarding and the journal with local Auth sessions
+        run: node supabase/auth-rollout/verify-isolated-stack.mjs
+      - name: Show startup failures
+        if: failure()
+        shell: bash
+        run: |
+          if test -f "$RUNNER_TEMP/helpeat-isolated-start.log"; then
+            grep -Ei 'failed|unhealthy|timeout|rate limit|connection refused' "$RUNNER_TEMP/helpeat-isolated-start.log" | tail -20 || true
+          fi
+      - name: Stop disposable Supabase
+        if: always()
+        shell: bash
+        run: |
+          if test -d "$HELPEAT_ISOLATED_STACK"; then
+            cd "$HELPEAT_ISOLATED_STACK"
+            npx --yes supabase@2.118.0 stop --no-backup > /dev/null 2>&1
+          fi
