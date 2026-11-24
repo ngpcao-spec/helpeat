@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { after, before, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
-import { googleClaims, googleOptions, googleReturn } from '../public/supabase.mjs'
+import { createRealApi, googleClaims, googleOptions, googleReturn, homePilotGate } from '../public/supabase.mjs'
 
 const sql = path => readFile(new URL('../supabase/' + path, import.meta.url), 'utf8')
 const userA = 'aaaaaaaa-0000-4000-8000-000000000001'
@@ -64,6 +65,54 @@ test('OAuth return cleanup preserves the real mode and removes aborted PKCE or p
   assert.deepEqual(googleReturn(root + '#error=access_denied&error_description=fixture'), { href: root, hasCode: false })
   assert.deepEqual(googleReturn(root + '#sb=&access_token=fixture&refresh_token=fixture'), { href: root, hasCode: false })
   assert.equal(googleReturn(root + '#journal'), null)
+})
+
+test('production pilot reuses only an approved signed Google session and prompts no new login', async () => {
+  const base = 'https://ngpcao-spec.github.io/helpeat/'
+  const email = 'tester@example.test'
+  const config = {
+    url: 'https://test.supabase.co',
+    pilotHashes: [userA].map(id => createHash('sha256').update(id).digest('hex')),
+  }
+  let verified = { claims: { ...claims(userA), email } }
+  const gate = homePilotGate(config, {
+    getItem(key) {
+      assert.equal(key, 'sb-test-auth-token')
+      return JSON.stringify({ access_token: 'fixture' })
+    },
+  }, { auth: { getClaims: async token => {
+    assert.equal(token, 'fixture')
+    return { data: verified }
+  } } })
+  let session = null
+  const client = {
+    auth: {
+      getSession: async () => ({ data: { session } }),
+      getClaims: async () => ({ data: verified }),
+      signOut: async options => {
+        assert.deepEqual(options, { scope: 'local' })
+        return { data: null }
+      },
+      signInWithOAuth: async options => {
+        assert.deepEqual(options, { provider: 'google', options: {
+          redirectTo: base + '?mode=pilot', queryParams: { prompt: 'none', login_hint: email },
+        } })
+        return { data: null }
+      },
+    },
+  }
+  const real = createRealApi(config, base, client, gate)
+  assert.equal((await real.api('session')).google, true)
+  await real.signIn()
+  verified = { claims: { ...claims(userA, 'google', 'password'), email } }
+  assert.equal((await real.api('session')).google, false)
+  await assert.rejects(real.signIn(), { message: 'pilotHomeRequired' })
+  verified = { claims: { ...claims(userB), email } }
+  session = { user: { id: userB } }
+  const excluded = await real.api('session')
+  assert.equal(excluded.account, null)
+  assert.equal(excluded.authenticationError, 'pilotAccountRequired')
+  assert.equal(excluded.google, false)
 })
 
 test('Postgres denies anonymous and cross-account access to meals, items and preferences', async () => {

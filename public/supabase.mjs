@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js'
 import { initialTimes, nextMeal, vietnamTime } from './time.mjs'
 
 const storageKey = 'helpeat-supabase-auth-v1'
+const homeReviewsUrl = 'https://ngpcao-spec.github.io/home-reviews-demo/'
 const moveDate = (date, shift) => new Date(Date.parse(date) + shift * 86_400_000).toISOString().slice(0, 10)
 const columns = 'meal_date,meal_slot,status,helpeat_meal_items(position,name)'
 const publicErrors = new Set(['alreadyConfirmed', 'invalid', 'signInRequired'])
@@ -22,10 +23,39 @@ export function googleClaims(claims) {
     && claims.amr.some(entry => entry.method === 'oauth'))
 }
 
-export function googleOptions(base) {
+async function approvedPilotSubject(subject, hashes) {
+  if (typeof subject !== 'string') return false
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(subject))
+  const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('')
+  return hashes.includes(hash)
+}
+
+export function homePilotGate(config, storage = localStorage, verifier = createClient(config.url, config.key, {
+  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false, storageKey: 'helpeat-pilot-verifier' },
+})) {
+  const project = new URL(config.url).hostname.split('.')[0]
+  return async () => {
+    try {
+      const homeSession = JSON.parse(storage.getItem('sb-' + project + '-auth-token') ?? 'null')
+      if (typeof homeSession?.access_token !== 'string') return ''
+      const { data, error } = await verifier.auth.getClaims(homeSession.access_token)
+      const claims = data?.claims
+      if (error || !googleClaims(claims) || typeof claims.email !== 'string'
+        || !await approvedPilotSubject(claims.sub, config.pilotHashes)) return ''
+      return claims.email
+    } catch {
+      return ''
+    }
+  }
+}
+
+export function googleOptions(base, mode = 'real', loginHint = '') {
   const redirect = new URL(base)
-  redirect.searchParams.set('mode', 'real')
-  return { redirectTo: redirect.href, queryParams: { prompt: 'select_account' } }
+  redirect.searchParams.set('mode', mode)
+  const queryParams = mode === 'pilot'
+    ? { prompt: 'none', login_hint: loginHint }
+    : { prompt: 'select_account' }
+  return { redirectTo: redirect.href, queryParams }
 }
 
 export function googleReturn(href) {
@@ -53,18 +83,24 @@ function mapMeal(row) {
 
 export function createRealApi(config, base, client = createClient(config.url, config.key, {
   auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true, autoRefreshToken: true, storageKey },
-})) {
+}), gate = config.pilotHashes ? homePilotGate(config) : null) {
+  async function signedOut(common, authenticationError) {
+    const needsHome = gate && !await gate()
+    return { ...common, account: null, google: !needsHome, pilotHomeUrl: needsHome ? homeReviewsUrl : '', authenticationError }
+  }
+
   async function session() {
     const { session } = unwrap(await client.auth.getSession())
     const common = {
       real: true, demo: false, preview: false, google: true, photo: false, pushKey: '',
       zones: [], catalog: 'unconnected', upcoming: nextMeal(), today: vietnamTime().date,
     }
-    if (!session) return { ...common, account: null }
+    if (!session) return signedOut(common)
     const { claims } = unwrap(await client.auth.getClaims())
-    if (!googleClaims(claims) || claims.sub !== session.user.id) {
+    const excluded = config.pilotHashes && !await approvedPilotSubject(claims?.sub, config.pilotHashes)
+    if (!googleClaims(claims) || claims.sub !== session.user.id || excluded) {
       unwrap(await client.auth.signOut({ scope: 'local' }))
-      return { ...common, account: null, authenticationError: 'signInRequired' }
+      return signedOut(common, excluded ? 'pilotAccountRequired' : 'signInRequired')
     }
     const [profileResult, settingsResult] = await Promise.all([
       client.from('helpeat_profiles').select('locale,zone').eq('user_id', claims.sub).maybeSingle(),
@@ -128,7 +164,9 @@ export function createRealApi(config, base, client = createClient(config.url, co
   return {
     api,
     async signIn() {
-      unwrap(await client.auth.signInWithOAuth({ provider: 'google', options: googleOptions(base) }))
+      const email = gate ? await gate() : ''
+      if (gate && !email) throw new Error('pilotHomeRequired')
+      unwrap(await client.auth.signInWithOAuth({ provider: 'google', options: googleOptions(base, gate ? 'pilot' : 'real', email) }))
     },
     watch(listener) {
       client.auth.onAuthStateChange((event, session) => {

@@ -26,6 +26,7 @@ jobs:
       - run: npm run build
         env:
           VITE_HELPEAT_ENABLE_REAL: "false"
+          HELPEAT_PILOT_CONFIG: ${{ vars.HELPEAT_PILOT_CONFIG }}
       - uses: actions/upload-pages-artifact@v4
         with:
           name: github-pages

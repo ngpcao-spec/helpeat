@@ -11,6 +11,18 @@ const pwaAssets = ['manifest.webmanifest', 'icon-192.png', 'icon-512.png']
 const realKey = process.env.VITE_HELPEAT_SUPABASE_PUBLISHABLE_KEY
 const realEnabled = process.env.VITE_HELPEAT_ENABLE_REAL === 'true'
 const googleTest = googleTestPreview(process.env)
+const pilotVariable = process.env.HELPEAT_PILOT_CONFIG
+const pilot = pilotVariable ? JSON.parse(pilotVariable) : null
+const productionUrl = 'https://ihuztjkblywzjdruusdj.supabase.co'
+if (pilotVariable && (!/^sb_publishable_[\w-]+$/.test(pilot?.key ?? '')
+  || !Array.isArray(pilot?.pilotHashes) || pilot.pilotHashes.length !== 2
+  || new Set(pilot.pilotHashes).size !== 2 || !pilot.pilotHashes.every(hash => /^[a-f0-9]{64}$/.test(hash))
+  || realEnabled || googleTest)) {
+  throw new Error('Invalid Helpeat production pilot configuration')
+}
+const pilotConfig = pilot && {
+  url: productionUrl, key: pilot.key, origin: 'https://ngpcao-spec.github.io', pilotHashes: pilot.pilotHashes,
+}
 if (realEnabled && !/^sb_publishable_[\w-]+$/.test(realKey ?? '')) {
   throw new Error('A Supabase publishable key is required for an approved real-mode build')
 }
@@ -24,8 +36,8 @@ export default defineConfig({
   preview: googleTest?.listen,
   define: {
     __HELPEAT_STATIC_DEMO__: true,
-    __HELPEAT_REAL_CONFIG__: JSON.stringify(googleTest?.client ?? (realEnabled ? {
-      url: 'https://ihuztjkblywzjdruusdj.supabase.co', key: realKey,
+    __HELPEAT_REAL_CONFIG__: JSON.stringify(googleTest?.client ?? pilotConfig ?? (realEnabled ? {
+      url: productionUrl, key: realKey,
     } : null)),
   },
   build: { outDir, emptyOutDir: true, assetsInlineLimit: 0 },
@@ -41,6 +53,14 @@ export default defineConfig({
         manifest.short_name = 'HELPEAT Test'
         manifest.start_url = './?mode=real#today'
         await writeFile(file, JSON.stringify(manifest, null, 2))
+      }
+      if (pilotConfig) {
+        const manifest = JSON.parse(await readFile(resolve(outDir, 'manifest.webmanifest'), 'utf8'))
+        manifest.id = './?mode=pilot'
+        manifest.name = 'HELPEAT · Test'
+        manifest.short_name = 'HELPEAT Test'
+        manifest.start_url = './?mode=pilot#today'
+        await writeFile(resolve(outDir, 'manifest-pilot.webmanifest'), JSON.stringify(manifest, null, 2))
       }
       const files = (await readdir(outDir, { recursive: true, withFileTypes: true }))
         .filter(entry => entry.isFile() && entry.name !== 'sw.js')

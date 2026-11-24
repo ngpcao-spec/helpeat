@@ -9,10 +9,13 @@ const dialog = document.querySelector('#dialog')
 const toast = document.querySelector('#toast')
 const search = new URLSearchParams(location.search)
 const config = typeof __HELPEAT_REAL_CONFIG__ === 'undefined' ? null : __HELPEAT_REAL_CONFIG__
-const realConfig = config?.origin && config.origin !== location.origin ? null : config
+const onExpectedOrigin = !config?.origin || config.origin === location.origin
+const pilotMode = Boolean(config?.pilotHashes && onExpectedOrigin && search.get('mode') === 'pilot')
+const realConfig = onExpectedOrigin && (!config?.pilotHashes || pilotMode) ? config : null
 const chosenMode = realConfig && (search.get('mode') ?? localStorage.getItem('helpeat-active-mode'))
-const realMode = chosenMode === 'real'
-if (realConfig) localStorage.setItem('helpeat-active-mode', realMode ? 'real' : 'demo')
+const realMode = pilotMode || chosenMode === 'real'
+const realModeName = pilotMode ? 'pilot' : 'real'
+if (realConfig && !pilotMode) localStorage.setItem('helpeat-active-mode', realMode ? 'real' : 'demo')
 const locationPreference = staticDemo && !realMode ? 'helpeat-demo-language' : 'helpeat-language'
 const demoApi = staticDemo && !realMode ? createDemoApi(localStorage) : null
 let realClient
@@ -141,7 +144,10 @@ function signIn() {
   return hero(false) + '<section class="panel sign-in"><h2>' + t('google') + '</h2>'
     + (error ? '<p class="inline-error">' + esc(error) + '</p>' : '')
     + (state.session.google ? button('google', t('google'), '', 'primary')
-      : '<p>' + t('googleUnavailable') + '</p>') + '</section>' + modeLink()
+      : state.session.pilotHomeUrl
+        ? '<p>' + t('pilotHomeRequired') + '</p><a class="button secondary" href="'
+          + esc(state.session.pilotHomeUrl) + '">' + t('pilotOpenHome') + '</a>'
+        : '<p>' + t('googleUnavailable') + '</p>') + '</section>' + modeLink()
 }
 
 function currentMeal() {
@@ -627,7 +633,7 @@ async function action(element) {
     logout: async () => {
       await api('logout', 'POST')
       const url = new URL(location.pathname, location.origin)
-      if (realMode) url.searchParams.set('mode', 'real')
+      if (realMode) url.searchParams.set('mode', realModeName)
       location.replace(url.href)
     },
   }
@@ -749,6 +755,7 @@ window.addEventListener('hashchange', () => {
 })
 
 async function initialize() {
+  if (pilotMode) document.querySelector('link[rel="manifest"]').href = './manifest-pilot.webmanifest'
   if ('serviceWorker' in navigator) navigator.serviceWorker.register(new URL('./sw.js', document.baseURI)).catch(() => {})
   let callback
   try {
@@ -761,7 +768,7 @@ async function initialize() {
     if (callback) {
       history.replaceState(history.state, '', callback.href)
       if (!state.session.account && !state.session.authenticationError) {
-        state.session.authenticationError = callback.hasCode ? 'authRestart' : 'authFailed'
+        state.session.authenticationError = callback.hasCode ? 'authRestart' : pilotMode ? 'pilotGoogleFailed' : 'authFailed'
       }
     }
     if (state.session.preview && !state.session.account) {
@@ -793,7 +800,7 @@ async function initialize() {
     }
   } catch (error) {
     if (callback) history.replaceState(history.state, '', callback.href)
-    const retry = esc(location.pathname + (realMode ? '?mode=real' : ''))
+    const retry = esc(location.pathname + (realMode ? '?mode=' + realModeName : ''))
     main.innerHTML = empty('bowl', t(error.message), '')
       + '<a class="button secondary" href="' + retry + '">' + t('retry') + '</a>'
   }
