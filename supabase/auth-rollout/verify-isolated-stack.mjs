@@ -19,10 +19,12 @@ const adminKey = status.SECRET_KEY || status.SERVICE_ROLE_KEY
 assert.ok(publicKey && adminKey, 'Local Supabase did not return its development keys')
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8')
-const sql = statement => execFileSync('docker', [
-  'exec', '-i', 'supabase_db_helpeat-auth-validation', 'psql', '-U', 'postgres', '-d', 'postgres',
-  '-v', 'ON_ERROR_STOP=1', '-qAt',
-], { input: statement, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] }).trim()
+const databaseCommand = (args, input) => execFileSync('docker', [
+  'exec', '-i', 'supabase_db_helpeat-auth-validation', ...args,
+], { input, maxBuffer: 16 * 1024 * 1024 })
+const sql = (statement, database = 'postgres') => databaseCommand([
+  'psql', '-U', 'postgres', '-d', database, '-v', 'ON_ERROR_STOP=1', '-qAt',
+], statement).toString('utf8').trim()
 const client = key => createClient(apiUrl, key, { auth: { persistSession: false, autoRefreshToken: false } })
 const unwrap = (result, context) => {
   if (result.error) throw new Error(context + ': ' + (result.error.code ?? result.error.message))
@@ -63,10 +65,53 @@ const establishment = uuid(sql(`insert into public.establishments (organization_
   values ('${existingOrg}', 'Café fixture') returning id;`))
 sql(`insert into public.reviews (organization_id, establishment_id, rating)
   values ('${existingOrg}', '${establishment}', 5);`)
+
+const snapshotMeal = { date: vietnamTime().date, meal: 'lunch', status: 'confirmed',
+  dishes: [{ name: 'Bánh mì' }] }
+const beforeDeployment = await login('restaurant-existing')
+await beforeDeployment.journal.api('meal', 'PUT', snapshotMeal)
+
+// Rehearse a logical restore using only the synthetic data in this local container.
+const restoredDb = 'helpeat_restore_rehearsal'
+const archived = databaseCommand(['pg_dump', '-U', 'postgres', '-d', 'postgres', '--format=custom',
+  '--strict-names', '--schema=auth', '--schema=private', '--schema=public'])
+databaseCommand(['createdb', '-U', 'postgres', '--template=template0', restoredDb])
+sql(`create schema extensions;
+  create extension pgcrypto with schema extensions;
+  create extension "uuid-ossp" with schema extensions;`, restoredDb)
+databaseCommand(['pg_restore', '-U', 'postgres', '-d', restoredDb, '--exit-on-error', '--single-transaction'], archived)
+const snapshot = `select md5(jsonb_build_object(
+  'users', (select jsonb_agg(to_jsonb(entry) order by id) from auth.users entry),
+  'identities', (select jsonb_agg(to_jsonb(entry) order by id) from auth.identities entry),
+  'profiles', (select jsonb_agg(to_jsonb(entry) order by user_id) from public.profiles entry),
+  'organizations', (select jsonb_agg(to_jsonb(entry) order by id) from public.organizations entry),
+  'members', (select jsonb_agg(to_jsonb(entry) order by organization_id, user_id) from public.organization_members entry),
+  'establishments', (select jsonb_agg(to_jsonb(entry) order by id) from public.establishments entry),
+  'reviews', (select jsonb_agg(to_jsonb(entry) order by id) from public.reviews entry),
+  'meals', (select jsonb_agg(to_jsonb(entry) order by id) from public.helpeat_meals entry),
+  'items', (select jsonb_agg(to_jsonb(entry) order by meal_id, position) from public.helpeat_meal_items entry),
+  'legacy_trigger', pg_get_triggerdef((select oid from pg_trigger
+    where tgrelid = 'auth.users'::regclass and tgname = 'on_auth_user_created')),
+  'policies', (select jsonb_agg(to_jsonb(entry) order by schemaname, tablename, policyname)
+    from pg_policies entry where schemaname in ('public', 'private', 'auth'))
+)::text);`
+const sourceSnapshot = sql(snapshot)
+assert.match(sourceSnapshot, /^[a-f0-9]{32}$/)
+assert.equal(sql(snapshot, restoredDb), sourceSnapshot)
+assert.equal(sql(`begin;
+  set local role authenticated;
+  select set_config('request.jwt.claims', '{"sub":"${uuid(existing)}","app_metadata":{"provider":"google"},"amr":[{"method":"oauth"}]}', true);
+  select count(*) from public.helpeat_meals;
+  rollback;`, restoredDb).split('\n').at(-1), '1')
+console.log('Logical restore rehearsal: synthetic Auth users and identities, organizations, reviews, journal, trigger and RLS restored in a separate database.')
+
 sql(await read('./20261124084826_home_reviews_self_provisioning.sql'))
 assert.equal(sql("select has_function_privilege('authenticated','private.provision_home_user(uuid)','EXECUTE')"), 'f')
 const legacy = await signup('restaurant-legacy')
 assert.equal(organizations(legacy).length, 1)
+const premature = await signup('helpeat-before-cutover', { app: 'helpeat' })
+assert.equal(organizations(premature).length, 1)
+console.log('Cutover gate: before phase two a new Auth user creates a HOME Reviews organization even when signup metadata identifies Helpeat.')
 
 sql(await read('./20261124102903_separate_helpeat_signup.sql'))
 const anonymous = await client(publicKey).rpc('ensure_home_user')
@@ -132,7 +177,7 @@ assert.deepEqual((await secondDevice.journal.api('journal')).entries, [meal])
 const homeFromSameIdentity = unwrap(await secondDevice.browser.rpc('ensure_home_user'), 'Helpeat user opening HOME Reviews')
 assert.deepEqual(organizations(aId).map(org => org.id), [homeFromSameIdentity])
 assert.deepEqual((await secondDevice.journal.api('journal')).entries, [meal])
-assert.deepEqual((await existingClient.journal.api('journal')).entries, [])
+assert.deepEqual((await existingClient.journal.api('journal')).entries, [snapshotMeal])
 console.log('Shared identity: HOME Reviews onboarding reuses the Helpeat user ID and preserves the private journal.')
 await secondDevice.journal.api('meal', 'PUT', { ...meal, dishes: [{ name: 'Cơm tấm' }] })
 assert.deepEqual((await secondDevice.journal.api('habits')).dishes, [{ name: 'Cơm tấm', count: 1 }])
@@ -146,5 +191,6 @@ const afterRollback = await signup('restaurant-after-rollback')
 assert.equal(organizations(afterRollback).length, 1)
 assert.deepEqual(organizations(aId).map(org => org.id), [homeFromSameIdentity])
 assert.deepEqual(organizations(bId), [])
+assert.deepEqual((await existingClient.journal.api('journal')).entries, [snapshotMeal])
 assert.equal(sql("select has_function_privilege('authenticated','private.provision_home_user(uuid)','EXECUTE')"), 'f')
 console.log('Rollback: legacy signup restored and previous organizations, minimal profiles and the caller-only RPC retained.')
