@@ -13,6 +13,8 @@ Un opérateur habilité de HOME Reviews consigne les décisions dans les deux ta
 
 ## Ordre de déploiement partagé
 
-Appliquer une seule fois la migration `20261125012927_helpeat_home_catalog.sql` au projet `ihuztjkblywzjdruusdj`, après les migrations HOME Reviews de classification, de fiches Google et de scores, et la migration du journal Helpeat. Le déploiement Pages consomme uniquement la RPC. Avant le prochain déploiement de schéma HOME Reviews, aligner son historique sur la version Supabase effectivement enregistrée et utiliser la même migration. La migration crée des tables de décisions vides et un point de lecture. Toute première publication exige une décision de HOME Reviews.
+La migration `20261125014237_helpeat_home_catalog.sql` est enregistrée dans le projet `ihuztjkblywzjdruusdj`. Son SQL correspond au fichier testé initialement sous le numéro `20261125012927`. Elle dépend des migrations HOME Reviews de classification, de fiches Google et de scores, ainsi que de la migration du journal Helpeat. Les deux dépôts utilisent le même numéro et le même SQL pour cette entrée. Intégrer la branche d’alignement HOME Reviews avant son prochain déploiement de schéma. [Historique partagé HOME Reviews](https://github.com/ngpcao-spec/home-reviews-demo/tree/codex/helpeat-home-catalog-history)
+
+Le déploiement Pages consomme la RPC. Les tables de décisions ont été créées vides. À l’audit du 25 novembre 2026, une association pour Bánh căn est confirmée et active, 61 restent proposées et les 29 fiches de score sont obsolètes. La première publication exige l’accord de HOME Reviews et une disponibilité attestée.
 
 `npm test` couvre la projection et les parcours avec des données fictives. Le workflow Supabase jetable vérifie la lecture par deux sessions Auth indépendantes, le refus d’accès aux sources et le retrait immédiat.

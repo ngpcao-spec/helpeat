@@ -112,7 +112,7 @@ assert.equal(sql(`begin;
 console.log('Logical restore rehearsal: synthetic Auth users and identities, organizations, reviews, journal, trigger and RLS restored in a separate database.')
 
 sql(await read('../../test/fixtures/catalog-sources.sql'))
-sql(await read('../migrations/20261125012927_helpeat_home_catalog.sql'))
+sql(await read('../migrations/20261125014237_helpeat_home_catalog.sql'))
 sql(await read('./20261124084826_home_reviews_self_provisioning.sql'))
 assert.equal(sql("select has_function_privilege('authenticated','private.provision_home_user(uuid)','EXECUTE')"), 'f')
 const legacy = await signup('restaurant-legacy')
