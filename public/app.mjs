@@ -172,8 +172,10 @@ function dailySuggestions() {
   if (state.loading === 'today' && !data) return empty('clock', t('loading'), '')
   if (data?.error) return empty('bowl', t(data.error), '', button('refresh', t('retry'), 'redo'))
   if (!data || data.status !== 'ready') return empty('bowl', t('catalogTitle'), t(data?.status || state.session.catalog))
+  if (data.hasCatalog === false) return empty('bowl', t('catalogTitle'), t('catalogEmpty'))
   if (!data.hasArea) return empty('pin', t('noAreaTitle'), t('noArea'), button('area', t('chooseArea'), 'pin'))
-  if (!data.suggestions.length) return empty('bowl', t('catalogTitle'), t('empty'))
+  if (!data.suggestions.length) return empty('bowl', t('catalogTitle'), t('empty'),
+    realMode ? button('area', t('changeArea'), 'pin') : '')
   return '<div class="suggestions">' + data.suggestions.map(dish => {
     const first = dish.restaurants[0]
     return '<a class="suggestion" href="#dish/' + esc(dish.id) + '">'
@@ -194,8 +196,13 @@ function today() {
 function restaurantCard(place, isGroup = false) {
   const issues = place.issues?.length ? '<details><summary>' + t('issues') + '</summary><ul>'
     + place.issues.map(issue => '<li>' + esc(name(issue)) + '</li>').join('') + '</ul></details>' : ''
+  const distance = place.distanceKm == null ? '' : new Intl.NumberFormat(lang(), {
+    style: 'unit', unit: 'kilometer', maximumFractionDigits: 1,
+  }).format(place.distanceKm)
+  const location = [place.address || place.zone, distance].filter(Boolean).join(' · ')
   return '<article class="panel restaurant"><div class="section-heading"><div><h3>' + esc(name(place.name)) + '</h3>'
-    + '<p>' + esc(place.address || place.zone) + '</p>' + demoTag() + '</div>'
+    + '<p>' + esc(location) + '</p>'
+    + (place.venueType === 'street_food' ? '<p>' + t('streetFood') + '</p>' : '') + demoTag() + '</div>'
     + (place.score == null ? '' : '<span class="score" title="' + t(state.session.demo ? 'demoScore' : 'score') + '">'
       + icon('star') + esc(place.score) + '/100</span>') + '</div>'
     + (place.price == null ? '' : '<p>' + esc(price(place.price)) + (isGroup ? ' ' + t('perPerson') : '') + '</p>')
@@ -209,7 +216,7 @@ function restaurantCard(place, isGroup = false) {
 
 function dishPage(id, addresses) {
   const dish = state.daily?.suggestions?.find(item => item.id === id)
-  if (!dish && state.loading === 'today') return empty('clock', t('loading'), '')
+  if (state.loading === 'today' && (realMode || !dish)) return empty('clock', t('loading'), '')
   if (!dish) return '<a class="back" href="#today">' + icon('back') + t('back') + '</a>'
     + empty('bowl', t('dishUnavailable'), '')
   const alternatives = dish.restaurants.slice(1)
@@ -266,7 +273,9 @@ function outing() {
     + (data ? '<section class="outing-results"><h2>' + t('outingResults') + '</h2>'
       + (data.error ? empty('group', t(data.error), '')
         : data.status !== 'ready' ? empty('group', t('catalogTitle'), t(data.status))
-          : !data.suggestions.length ? empty('group', t('groupEmpty'), '')
+          : data.hasCatalog === false ? empty('group', t('catalogTitle'), t('catalogEmpty'))
+          : !data.suggestions.length ? empty('group', t('groupEmpty'), '',
+            realMode ? button('outing-area', t('changeArea'), 'pin') : '')
             : data.suggestions.map(place => restaurantCard(place, true)).join('')) + '</section>' : '')
 }
 
@@ -566,6 +575,7 @@ async function action(element) {
   const actions = {
     google: () => realClient?.signIn(),
     area: areaDialog,
+    'outing-area': () => document.querySelector('#outing-form [name="zone"]')?.focus(),
     position: () => geolocate(true),
     language: () => {
       state.locale = state.locale === 'fr' ? 'vi' : 'fr'
@@ -749,7 +759,7 @@ window.addEventListener('hashchange', () => {
   main.focus({ preventScroll: true })
   const { screen, id } = route()
   if (screen === 'today' || (['dish', 'addresses'].includes(screen)
-    && !state.daily?.suggestions?.some(item => item.id === id))) void daily()
+    && (realMode || !state.daily?.suggestions?.some(item => item.id === id)))) void daily()
   if (screen === 'journal') void loadJournal()
   if (screen === 'account') void loadHabits()
 })
@@ -796,7 +806,8 @@ async function initialize() {
       if (['today', 'dish', 'addresses'].includes(route().screen)) void daily()
       if (route().screen === 'journal') void loadJournal()
       if (route().screen === 'account') void loadHabits()
-      if (!state.session.demo && !state.preferences.zone && state.session.catalog === 'ready') void geolocate()
+      if (!state.session.demo && !state.preferences.zone && state.session.catalog === 'ready'
+        && state.session.zones.length) void geolocate()
     }
   } catch (error) {
     if (callback) history.replaceState(history.state, '', callback.href)

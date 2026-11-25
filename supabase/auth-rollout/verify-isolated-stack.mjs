@@ -200,3 +200,31 @@ assert.deepEqual(organizations(bId), [])
 assert.deepEqual((await existingClient.journal.api('journal')).entries, [snapshotMeal])
 assert.equal(sql("select has_function_privilege('authenticated','private.provision_home_user(uuid)','EXECUTE')"), 'f')
 console.log('Rollback: legacy signup restored and previous organizations, minimal profiles and the caller-only RPC retained.')
+
+sql(await read('../../test/fixtures/catalog-sources.sql'))
+sql(await read('../migrations/20261125012927_helpeat_home_catalog.sql'))
+const dishId = uuid(sql("insert into private.dish_names values (gen_random_uuid(),'Bánh căn') returning id;"))
+sql(`update public.establishments set google_id='fixture-cid' where id='${establishment}';
+  insert into private.google_place_profiles values ('${establishment}','${existingOrg}',
+    '{"identity":{"name":"Café autorisé","cid":"fixture-cid","city":"Đà Nẵng","address":"12 Rue de test","coordinates":{"latitude":16.023,"longitude":108.23}},"internal":"DO-NOT-PUBLISH"}');
+  insert into private.restaurant_dishes (scope,dish_id,status,enabled)
+    values ('establishment:${establishment}','${dishId}','confirmed',true);
+  insert into private.helpeat_restaurant_publications (establishment_id,published,reviewed_at,review_reference)
+    values ('${establishment}',true,now(),'isolated approval');
+  insert into private.helpeat_dish_publications
+    (establishment_id,dish_id,association_scope,approved,verified_at,valid_until,review_reference,meal_slots)
+    values ('${establishment}','${dishId}','establishment:${establishment}',true,now(),now()+interval '7 days','isolated check',array['lunch']);`)
+
+const catalogA = unwrap(await secondDevice.browser.rpc('helpeat_catalog'), 'Catalog account A')
+const catalogB = unwrap(await b.browser.rpc('helpeat_catalog'), 'Catalog account B')
+assert.deepEqual(catalogA, catalogB)
+assert.deepEqual(catalogA.restaurants.map(place => [place.id, place.dishes[0].id]), [[establishment, dishId]])
+assert.doesNotMatch(JSON.stringify(catalogA), /DO-NOT-PUBLISH|organization_id|isolated approval/)
+assert.equal((await client(publicKey).rpc('helpeat_catalog')).error?.code, '42501')
+assert.ok((await b.browser.from('restaurant_recommendation_sheets').select('*')).error)
+assert.deepEqual(unwrap(await b.browser.from('establishments').select('id'), 'Foreign HOME establishments'), [])
+const nearby = await secondDevice.journal.api('today', 'POST', { date: vietnamTime().date, meal: 'lunch', zone: 'Da Nang' })
+assert.deepEqual(nearby.suggestions.map(dish => dish.id), [dishId])
+sql(`update private.helpeat_restaurant_publications set published=false where establishment_id='${establishment}';`)
+assert.deepEqual(unwrap(await b.browser.rpc('helpeat_catalog'), 'Catalog withdrawal').restaurants, [])
+console.log('Catalog: two independently signed local Auth sessions read the same approved dish; anonymous and private HOME access denied; withdrawal immediate.')

@@ -45,7 +45,7 @@ export function approvedCatalog(payload, now = Date.now()) {
     const dishes = []
     const seen = new Set()
     for (const dish of Array.isArray(item.dishes) ? item.dishes : []) {
-      if (!dish || dish.confirmed !== true || !(Date.parse(dish.validUntil) > now)) continue
+      if (!dish || dish.confirmed !== true || dish.enabled === false || !(Date.parse(dish.validUntil) > now)) continue
       const dishName = localized(dish.name)
       if (typeof dish.id !== 'string' || !key.test(dish.id) || !label(dishName) || seen.has(dish.id)) continue
       seen.add(dish.id)
@@ -62,6 +62,7 @@ export function approvedCatalog(payload, now = Date.now()) {
     if (!dishes.length) continue
     restaurants.set(item.id, {
       id: item.id, name, zone, address: text(item.address), maps: httpsUrl(item.mapsUrl),
+      venueType: item.venueType === 'street_food' || item.venueType === 'restaurant' ? item.venueType : null,
       lat: number(item.latitude, -90, 90), lng: number(item.longitude, -180, 180),
       score: number(item.homeScore, 0, 100),
       budget: number(item.budgetPerPersonVnd, 1, 10_000_000),
@@ -126,20 +127,29 @@ export function inArea(restaurants, zone, coordinates) {
   return []
 }
 
-export function publicRestaurant(restaurant, dish) {
+export function publicRestaurant(restaurant, dish, coordinates) {
+  const distanceKm = distance(coordinates, restaurant)
   return {
     id: restaurant.id, name: restaurant.name, zone: restaurant.zone, address: restaurant.address,
+    venueType: restaurant.venueType, distanceKm: Number.isFinite(distanceKm) ? distanceKm : null,
     maps: restaurant.maps, score: restaurant.score, price: dish ? dish.price : restaurant.budget, issues: restaurant.issues,
   }
 }
 
 function historyWeight(history, dish, meal) {
+  const names = Object.values(dish.name).filter(Boolean).map(normalize)
+  if (!Array.isArray(history)) {
+    const count = items => items?.find(item => names.includes(normalize(item.name)))?.count ?? 0
+    const timeCount = count(history.byMeal?.[meal])
+    const recent = history.recent?.filter(entry => entry.dishes.some(name => names.includes(normalize(name)))).length ?? 0
+    const family = history.families?.find(item => item.family === dish.family)?.count ?? 0
+    return Math.max(count(history.dishes), timeCount, recent) * 1.6 + timeCount * 0.8 + family * 0.8
+  }
   let weight = 0
-  const name = normalize(label(dish.name))
   for (const entry of history) {
     if (entry.status !== 'confirmed') continue
     for (const consumed of entry.dishes) {
-      const exact = consumed.id === dish.id || normalize(consumed.name) === name
+      const exact = consumed.id === dish.id || names.includes(normalize(consumed.name))
       const family = dish.family && normalize(consumed.family || '') === normalize(dish.family)
       if (exact || family) weight += (exact ? 1.6 : 0.8) * (entry.meal === meal ? 1.5 : 1)
     }
@@ -166,7 +176,7 @@ export function dailyCandidates(restaurants, meal, history, coordinates, exclude
     const { restaurant, dish: recommendedDish, score } = places[0]
     return {
       id: dish.id, name: dish.name, family: dish.family, image: recommendedDish.image,
-      restaurants: places.map(place => publicRestaurant(place.restaurant, place.dish)),
+      restaurants: places.map(place => publicRestaurant(place.restaurant, place.dish, coordinates)),
       score: score + Math.min(habit, 8) + (habit === 0 ? 2 : 0),
       familiar: habit > 0,
       near: distance(coordinates, restaurant) < 3,
@@ -177,16 +187,17 @@ export function dailyCandidates(restaurants, meal, history, coordinates, exclude
   return (fresh.length ? fresh : candidates).slice(0, 12)
 }
 
-export function groupCandidates(restaurants, party, budget, wish) {
+export function groupCandidates(restaurants, party, budget, wish = '', coordinates) {
   const terms = normalize(wish).split(/\s+/).filter(term => term.length > 2)
-  return restaurants.filter(restaurant => restaurant.score != null && restaurant.budget != null
+  return restaurants.filter(restaurant => restaurant.budget != null
     && restaurant.budget * party <= budget && restaurant.capacity != null && restaurant.capacity >= party)
     .map(restaurant => {
       const keywords = normalize(restaurant.dishes.map(dish => `${label(dish.name, 'vi')} ${label(dish.name, 'fr')} ${dish.family}`).join(' '))
       return {
-        ...publicRestaurant(restaurant), capacity: restaurant.capacity,
+        ...publicRestaurant(restaurant, null, coordinates), capacity: restaurant.capacity,
         total: restaurant.budget * party,
-        rank: restaurant.score - restaurant.issues.length * 8 + terms.filter(term => keywords.includes(term)).length * 5,
+        rank: (restaurant.score ?? 50) - restaurant.issues.length * 8
+          + terms.filter(term => keywords.includes(term)).length * 5,
         menu: restaurant.dishes.map(dish => dish.name).slice(0, 12),
       }
     }).sort((a, b) => b.rank - a.rank || a.id.localeCompare(b.id)).slice(0, 12)

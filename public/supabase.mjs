@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
+import { approvedCatalog, dailyCandidates, groupCandidates, inArea, label, normalize } from './catalog.mjs'
 import { initialTimes, nextMeal, vietnamTime } from './time.mjs'
 
 const storageKey = 'helpeat-supabase-auth-v1'
@@ -84,6 +85,28 @@ function mapMeal(row) {
 export function createRealApi(config, base, client = createClient(config.url, config.key, {
   auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true, autoRefreshToken: true, storageKey },
 }), gate = config.pilotHashes ? homePilotGate(config) : null) {
+  let catalogRequest
+
+  async function getCatalog() {
+    // Share concurrent reads without keeping withdrawn restaurants in a client cache.
+    catalogRequest ??= (async () => {
+      try {
+        const { data, error } = await client.rpc('helpeat_catalog')
+        if (error) return { status: error.code === 'PGRST202' ? 'unconnected' : 'unavailable', restaurants: [] }
+        const restaurants = approvedCatalog(data).map(place => {
+          if (place.maps || !place.address) return place
+          const maps = new URL('https://www.google.com/maps/dir/')
+          maps.search = new URLSearchParams({ api: '1', destination: place.address }).toString()
+          return { ...place, maps: maps.href }
+        })
+        return { status: 'ready', restaurants }
+      } catch {
+        return { status: 'unavailable', restaurants: [] }
+      }
+    })().finally(() => { catalogRequest = undefined })
+    return catalogRequest
+  }
+
   async function signedOut(common, authenticationError) {
     const needsHome = gate && !await gate()
     return { ...common, account: null, google: !needsHome, pilotHomeUrl: needsHome ? homeReviewsUrl : '', authenticationError }
@@ -102,16 +125,18 @@ export function createRealApi(config, base, client = createClient(config.url, co
       unwrap(await client.auth.signOut({ scope: 'local' }))
       return signedOut(common, excluded ? 'pilotAccountRequired' : 'signInRequired')
     }
-    const [profileResult, settingsResult] = await Promise.all([
+    const [profileResult, settingsResult, catalog] = await Promise.all([
       client.from('helpeat_profiles').select('locale,zone').eq('user_id', claims.sub).maybeSingle(),
       client.from('helpeat_notification_settings').select('breakfast,lunch,dinner').eq('user_id', claims.sub).maybeSingle(),
+      getCatalog(),
     ])
     const profile = unwrap(profileResult)
     const settings = unwrap(settingsResult)
     const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || ''
     const times = settings ? Object.fromEntries(Object.keys(initialTimes).map(meal => [meal, settings[meal].slice(0, 5)])) : initialTimes
     return {
-      ...common, account: { id: claims.sub, name, preferences: {
+      ...common, catalog: catalog.status, zones: [...new Set(catalog.restaurants.map(place => place.zone))].sort(),
+      account: { id: claims.sub, name, preferences: {
         locale: profile?.locale || 'vi', zone: profile?.zone || '', times, notify: false,
       } },
     }
@@ -124,13 +149,44 @@ export function createRealApi(config, base, client = createClient(config.url, co
       return { ok: true }
     }
     if (path === 'habits') return unwrap(await client.rpc('helpeat_habits'))
-    if (path.startsWith('dishes?')) return []
-    if (path === 'today') {
-      const row = unwrap(await client.from('helpeat_meals').select(columns)
-        .eq('meal_date', body.date).eq('meal_slot', body.meal).maybeSingle())
-      return { status: 'unconnected', entry: row ? mapMeal(row) : null, suggestions: [], hasArea: Boolean(body.zone) }
+    if (path.startsWith('dishes?')) {
+      const q = normalize(new URLSearchParams(path.split('?')[1]).get('q') ?? '')
+      if (q.length < 2) return []
+      const { restaurants } = await getCatalog()
+      const matches = new Map()
+      for (const place of restaurants) {
+        for (const dish of place.dishes) {
+          if (Object.values(dish.name).some(value => normalize(value).includes(q))) {
+            matches.set(dish.id, { id: dish.id, name: label(dish.name), family: dish.family })
+          }
+        }
+      }
+      return [...matches.values()].slice(0, 12)
     }
-    if (path === 'outing') return { status: 'unconnected', suggestions: [] }
+    if (path === 'today') {
+      const [meal, { status, restaurants }] = await Promise.all([
+        client.from('helpeat_meals').select(columns).eq('meal_date', body.date).eq('meal_slot', body.meal).maybeSingle(),
+        getCatalog(),
+      ])
+      const row = unwrap(meal)
+      const area = inArea(restaurants, body.zone, body.coordinates)
+      const response = { status, entry: row ? mapMeal(row) : null, suggestions: [],
+        hasArea: Boolean(body.zone || body.coordinates), hasCatalog: restaurants.length > 0 }
+      if (!area.length) return response
+      if (body.detailId) {
+        const places = area.map(place => ({ ...place, dishes: place.dishes.filter(dish => dish.id === body.detailId) }))
+        return { ...response, suggestions: dailyCandidates(places, body.meal, [], body.coordinates) }
+      }
+      const habits = await client.rpc('helpeat_habits')
+      const suggestions = dailyCandidates(area, body.meal, habits.data ?? [], body.coordinates, body.exclude).slice(0, 3)
+      return { ...response, suggestions }
+    }
+    if (path === 'outing') {
+      const { status, restaurants } = await getCatalog()
+      const area = inArea(restaurants, body.zone, body.coordinates)
+      const suggestions = groupCandidates(area, body.party, body.budget, body.wish, body.coordinates).slice(0, 3)
+      return { status, suggestions, hasCatalog: restaurants.length > 0 }
+    }
     if (path.startsWith('journal')) {
       const today = vietnamTime().date
       const before = new URLSearchParams(path.split('?')[1]).get('before') ?? moveDate(today, 2)
