@@ -36,7 +36,7 @@ before(async () => {
   await db.exec(await read('./fixtures/catalog-sources.sql'))
   await db.exec(await read('../supabase/migrations/20261124082946_helpeat_journal_and_habits.sql'))
   await db.exec(await read('../supabase/migrations/20261125014237_helpeat_home_catalog.sql'))
-  await db.exec(await read('../supabase/migrations/20261125050844_helpeat_street_food_catalog.sql'))
+  await db.exec(await read('../supabase/migrations/20261125051559_helpeat_street_food_catalog.sql'))
   await query('insert into auth.users (id) values ($1),($2),($3)', [owner, googleA, googleB])
   const [{ id: org }] = (await query('select id from public.organizations where created_by=$1', [owner])).rows
   await query("insert into private.dish_names values ($1,'Phở'),($2,'Bún'),($3,'Cơm'),($4,'Cháo'),($5,'Canh')",
