@@ -1,4 +1,4 @@
-import { approvedCatalog, dailyCandidates, groupCandidates, inArea, label, normalize } from './catalog.mjs'
+import { dailyCandidates, demoCatalog, groupCandidates, inArea, label, normalize } from './catalog.mjs'
 import { initialTimes, nextMeal, vietnamTime } from './time.mjs'
 
 export const staticDemo = typeof __HELPEAT_STATIC_DEMO__ !== 'undefined' && __HELPEAT_STATIC_DEMO__
@@ -27,11 +27,11 @@ function place(id, name, area, score, budget, capacity, dishIds, issues = []) {
   return {
     id, name, zone: area, published: true, homeScore: score, maxGroupSize: capacity,
     budgetPerPersonVnd: budget, recurringIssues: issues,
-    dishes: dishIds.map(id => ({ id, name: names[id], ...dishes[id], confirmed: true, validUntil: '2099-01-01' })),
+    dishes: dishIds.map(id => ({ id, name: names[id], ...dishes[id], confirmed: true })),
   }
 }
 
-const restaurants = approvedCatalog({ source: 'HOME Reviews', version: 1, restaurants: [
+const restaurants = demoCatalog([
   place('demo-bol', { vi: 'Bếp Bát Mây', fr: 'Le Bol de Nuage' }, zone, 92, 125000, 8, ['pho']),
   place('demo-jardin', { vi: 'Vườn Bún', fr: 'Le Jardin des Nouilles' }, zone, 88, 145000, 12, ['bun', 'pho'],
     [{ vi: 'Chờ lâu vào giờ cao điểm', fr: 'Attente aux heures de pointe' }]),
@@ -39,7 +39,7 @@ const restaurants = approvedCatalog({ source: 'HOME Reviews', version: 1, restau
   place('demo-herbes', { vi: 'Bếp Lá Non', fr: 'La Table des Herbes' }, zone, 75, 100000, 6, ['rolls']),
   place('demo-lotus', { vi: 'Góc Sen Nhỏ', fr: 'La Table du Petit Lotus' }, 'Hà Nội', 89, 120000, 10, ['pho', 'bun', 'com']),
   place('demo-soie', { vi: 'Bếp Lụa', fr: 'La Cuisine de Soie' }, 'Thành phố Hồ Chí Minh', 91, 140000, 12, ['pho', 'bun', 'com']),
-] }).map(restaurant => ({
+]).map(restaurant => ({
   ...restaurant, dishes: restaurant.dishes.map(dish => ({ ...dish, image: photos[dish.id] ?? '' })),
 }))
 

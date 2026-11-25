@@ -180,7 +180,8 @@ function dailySuggestions() {
     const first = dish.restaurants[0]
     return '<a class="suggestion" href="#dish/' + esc(dish.id) + '">'
       + (dish.image ? '<img class="dish-image" src="' + esc(dish.image) + '" alt="" loading="lazy">' : '<div class="dish-placeholder">' + icon('bowl') + '</div>')
-      + '<div><h3>' + esc(name(dish.name)) + '</h3><p>' + esc(name(first.name)) + '</p>' + demoTag() + '</div>'
+      + '<div><h3>' + esc(name(dish.name)) + '</h3><p>' + esc(name(first.name)) + '</p>'
+      + (realMode && first.score == null ? '<p>' + t('scoreUnavailable') + '</p>' : '') + demoTag() + '</div>'
       + (first.price == null ? '' : '<strong>' + esc(price(first.price)) + '</strong>') + '</a>'
   }).join('') + '</div>'
 }
@@ -202,12 +203,15 @@ function restaurantCard(place, isGroup = false) {
   const location = [place.address || place.zone, distance].filter(Boolean).join(' · ')
   return '<article class="panel restaurant"><div class="section-heading"><div><h3>' + esc(name(place.name)) + '</h3>'
     + '<p>' + esc(location) + '</p>'
-    + (place.venueType === 'street_food' ? '<p>' + t('streetFood') + '</p>' : '') + demoTag() + '</div>'
+    + (place.venueType === 'street_food' ? '<p>' + t('streetFood') + '</p>' : '')
+    + (realMode && place.score == null ? '<p>' + t('scoreUnavailable') + '</p>' : '') + demoTag() + '</div>'
     + (place.score == null ? '' : '<span class="score" title="' + t(state.session.demo ? 'demoScore' : 'score') + '">'
       + icon('star') + esc(place.score) + '/100</span>') + '</div>'
     + (place.price == null ? '' : '<p>' + esc(price(place.price)) + (isGroup ? ' ' + t('perPerson') : '') + '</p>')
-    + (isGroup ? '<p>' + t(state.session.demo ? 'demoTotal' : 'estimatedTotal') + ' · <strong>' + esc(price(place.total)) + '</strong></p>'
-      + (place.capacity == null ? '' : '<p>' + t('capacity') + ' · ' + esc(place.capacity) + '</p>')
+    + (realMode && place.mealSlotsKnown === false ? '<p>' + t('serviceUnknown') + '</p>' : '')
+    + (isGroup ? (place.total == null ? '<p>' + t('budgetUnknown') + '</p>'
+      : '<p>' + t(state.session.demo ? 'demoTotal' : 'estimatedTotal') + ' · <strong>' + esc(price(place.total)) + '</strong></p>')
+      + (place.capacity == null ? '<p>' + t('capacityUnknown') + '</p>' : '<p>' + t('capacity') + ' · ' + esc(place.capacity) + '</p>')
       + '<details><summary>' + t('menu') + '</summary><ul>'
       + place.menu.map(item => '<li>' + esc(name(item)) + '</li>').join('') + '</ul></details>' : '')
     + issues + (place.maps ? '<a class="button secondary" href="' + esc(place.maps) + '" target="_blank" rel="noopener noreferrer">'

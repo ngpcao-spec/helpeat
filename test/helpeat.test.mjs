@@ -11,14 +11,17 @@ import { pushSubscription } from '../server/push.mjs'
 import { createStore } from '../server/store.mjs'
 import { nextMeal, vietnamTime } from '../public/time.mjs'
 
-const pho = { id: 'pho', name: 'Phở', family: 'noodles', confirmed: true, validUntil: '2099-01-01', meals: ['lunch'] }
-const rice = { id: 'rice', name: 'Cơm tấm', family: 'rice', confirmed: true, validUntil: '2099-01-01', meals: ['lunch'] }
+const verification = { confirmed: true, enabled: true, verifiedAt: new Date().toISOString() }
+const pho = { id: 'pho', name: 'Phở', family: 'noodles', ...verification, meals: ['lunch'] }
+const rice = { id: 'rice', name: 'Cơm tấm', family: 'rice', ...verification, meals: ['lunch'] }
 const address = { id: 'a', name: 'Test A', zone: 'Đà Nẵng', published: true, homeScore: 90,
-  latitude: 16.05, longitude: 108.2, maxGroupSize: 6, budgetPerPersonVnd: 100_000 }
+  latitude: 16.05, longitude: 108.2, maxGroupSize: 6, budgetPerPersonVnd: 100_000, venueType: 'street_food' }
 const payload = { source: 'HOME Reviews', version: 1, restaurants: [
   { ...address, secret: 'internal', dishes: [pho, { ...rice, confirmed: false }, { ...rice, validUntil: '2000-01-01' }] },
   { ...address, id: 'b', name: 'Test B', homeScore: 75, dishes: [{ ...pho, priceVnd: 70_000 }, rice] },
   { ...address, id: 'c', published: false, dishes: [rice] },
+  { ...address, id: 'd', venueType: 'restaurant', dishes: [rice] },
+  { ...address, id: 'e', venueType: null, dishes: [rice] },
 ] }
 
 test('only current, confirmed dishes at approved restaurants enter the shortlist', () => {
@@ -37,7 +40,7 @@ test('only current, confirmed dishes at approved restaurants enter the shortlist
   assert.deepEqual(dailyCandidates(catalog, 'lunch', [], null, ['pho']).map(item => item.id), ['rice'])
 })
 
-test('confirmed meals affect the profile and group results require known suitability', () => {
+test('confirmed meals affect the profile and unknown group suitability is kept distinct', () => {
   const catalog = approvedCatalog(payload)
   const meal = { meal: 'lunch', dishes: [{ name: 'Cơm tấm', family: 'rice' }] }
   assert.equal(dailyCandidates(catalog, 'lunch', [{ ...meal, status: 'planned' }])[0].id, 'pho')
@@ -45,8 +48,31 @@ test('confirmed meals affect the profile and group results require known suitabi
   assert.equal(dailyCandidates(catalog, 'lunch', history)[0].id, 'rice')
   assert.equal(groupCandidates(catalog, 4, 390_000, '').length, 0)
   assert.equal(groupCandidates(catalog, 7, 900_000, '').length, 0)
-  assert.equal(groupCandidates([{ ...catalog[0], capacity: null }], 2, 900_000, '').length, 0)
+  const [verified, unknown] = groupCandidates([catalog[0], { ...catalog[1], budget: null, capacity: null, score: null }], 2, 900_000)
+  assert.deepEqual([verified.id, verified.total, verified.capacity], ['a', 200_000, 6])
+  assert.deepEqual([unknown.id, unknown.total, unknown.capacity, unknown.score], ['b', null, null, null])
   assert.equal(groupCandidates(catalog, 4, 400_000, '')[0].total, 400_000)
+})
+
+test('dish freshness is independent of commercial dates and service slots', () => {
+  const now = Date.parse('2026-11-25T05:00:00.000Z')
+  const recent = { ...pho, meals: [], verifiedAt: '2026-08-27T05:00:00.001Z' }
+  const candidate = { ...address, dishes: [
+    recent,
+    { ...recent, id: 'stale', verifiedAt: '2026-08-27T05:00:00.000Z' },
+    { ...recent, id: 'future', verifiedAt: '2026-11-25T05:00:00.001Z' },
+    { ...recent, id: 'missing', verifiedAt: null },
+    { ...recent, id: 'disabled', enabled: false },
+    { ...recent, id: 'withdrawn', enabled: null },
+    { ...recent, id: 'commercial_end', validUntil: '2026-11-25T05:00:00.000Z' },
+  ] }
+  const catalog = approvedCatalog({ ...payload, restaurants: [candidate] }, now)
+  assert.deepEqual(catalog[0].dishes.map(dish => dish.id), ['pho'])
+  assert.equal(catalog[0].dishes[0].verifiedAt, recent.verifiedAt)
+  for (const slot of ['breakfast', 'lunch', 'dinner']) {
+    const [offer] = dailyCandidates(catalog, slot, [])
+    assert.deepEqual([offer.id, offer.restaurants[0].mealSlotsKnown, offer.restaurants[0].price], ['pho', false, null])
+  }
 })
 
 test('AI may reorder the shortlist but cannot add to it', async () => {

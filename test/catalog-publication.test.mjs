@@ -13,7 +13,8 @@ const confirmedDish = 'bbbbbbbb-0000-4000-8000-000000000001'
 const proposedDish = 'bbbbbbbb-0000-4000-8000-000000000002'
 const disabledDish = 'bbbbbbbb-0000-4000-8000-000000000003'
 const expiredDish = 'bbbbbbbb-0000-4000-8000-000000000004'
-const places = Array.from({ length: 4 }, (_, i) => 'cccccccc-0000-4000-8000-00000000000' + (i + 1))
+const staleDish = 'bbbbbbbb-0000-4000-8000-000000000005'
+const places = Array.from({ length: 6 }, (_, i) => 'cccccccc-0000-4000-8000-00000000000' + (i + 1))
 const googleClaims = sub => ({ sub, app_metadata: { provider: 'google' }, amr: [{ method: 'oauth' }] })
 let db
 const query = (statement, params) => db.query(statement, params)
@@ -35,10 +36,11 @@ before(async () => {
   await db.exec(await read('./fixtures/catalog-sources.sql'))
   await db.exec(await read('../supabase/migrations/20261124082946_helpeat_journal_and_habits.sql'))
   await db.exec(await read('../supabase/migrations/20261125014237_helpeat_home_catalog.sql'))
+  await db.exec(await read('../supabase/migrations/20261125050844_helpeat_street_food_catalog.sql'))
   await query('insert into auth.users (id) values ($1),($2),($3)', [owner, googleA, googleB])
   const [{ id: org }] = (await query('select id from public.organizations where created_by=$1', [owner])).rows
-  await query("insert into private.dish_names values ($1,'Phở'),($2,'Bún'),($3,'Cơm'),($4,'Cháo')",
-    [confirmedDish, proposedDish, disabledDish, expiredDish])
+  await query("insert into private.dish_names values ($1,'Phở'),($2,'Bún'),($3,'Cơm'),($4,'Cháo'),($5,'Canh')",
+    [confirmedDish, proposedDish, disabledDish, expiredDish, staleDish])
   for (const [i, id] of places.entries()) {
     const scope = i === 1 ? 'shared:fixture' : 'establishment:' + id
     const placeId = i === 1 ? 'SharedFixture' : 'Fixture' + i
@@ -53,25 +55,31 @@ before(async () => {
     if (i !== 3) {
       await query(`insert into private.helpeat_restaurant_publications
         (establishment_id,published,reviewed_at,review_reference,venue_type,budget_per_person_vnd,max_group_size,publish_score,recurring_issues)
-        values ($1,$2,'2026-02-01','PRIVATE-APPROVAL',$3,90000,4,true,array['noise'])`,
-      [id, i !== 2, i === 0 ? 'street_food' : null])
+        values ($1,$2,now(),'PRIVATE-APPROVAL',$3,$4,$5,true,array['noise'])`,
+      [id, i !== 2, i === 4 ? 'restaurant' : i === 5 ? null : 'street_food', i === 1 ? null : 90000, i === 1 ? null : 4])
     }
     await query(`insert into private.restaurant_dishes (scope,dish_id,status,enabled,evidence)
       values ($1,$2,'confirmed',true,'{"internal":"NEVER-EXPORT"}')`, [scope, confirmedDish])
     if (i !== 3) await query(`insert into private.helpeat_dish_publications
       (establishment_id,dish_id,association_scope,approved,verified_at,valid_until,review_reference,price_vnd,meal_slots,family)
-      values ($1,$2,$3,true,'2026-02-01','2090-01-01','PRIVATE-APPROVAL',50000,array['lunch'],'noodles')`, [id, confirmedDish, scope])
+      values ($1,$2,$3,true,now(),null,'PRIVATE-APPROVAL',$4,$5,'noodles')`,
+    [id, confirmedDish, scope, i === 1 ? null : 50000, i === 1 ? [] : ['lunch']])
   }
   const scope = 'establishment:' + places[0]
   await query(`insert into private.restaurant_dishes (scope,dish_id,status,enabled)
     values ($1,$2,'proposed',true),($1,$3,'confirmed',false),($1,$4,'confirmed',true)`,
   [scope, proposedDish, disabledDish, expiredDish])
-  for (const dish of [proposedDish, disabledDish, expiredDish]) {
+  await query(`insert into private.restaurant_dishes (scope,dish_id,status,enabled,updated_at)
+    values ($1,$2,'confirmed',true,now()-interval '100 days')`, [scope, staleDish])
+  for (const dish of [proposedDish, disabledDish]) {
     await query(`insert into private.helpeat_dish_publications
-      (establishment_id,dish_id,association_scope,approved,verified_at,valid_until,review_reference,meal_slots)
-      values ($1,$2,$3,true,'2026-02-01',$4,'PRIVATE-APPROVAL',array['lunch'])`,
-    [places[0], dish, scope, dish === expiredDish ? '2026-03-01' : '2090-01-01'])
+      (establishment_id,dish_id,association_scope,approved,verified_at,review_reference)
+      values ($1,$2,$3,true,now(),'PRIVATE-APPROVAL')`, [places[0], dish, scope])
   }
+  await query(`insert into private.helpeat_dish_publications
+    (establishment_id,dish_id,association_scope,approved,verified_at,valid_until,review_reference)
+    values ($1,$2,$3,true,now()-interval '2 days',now()-interval '1 day','PRIVATE-APPROVAL'),
+    ($1,$4,$3,true,now()-interval '91 days',null,'PRIVATE-APPROVAL')`, [places[0], expiredDish, scope, staleDish])
   await query(`insert into public.restaurant_recommendation_sheets
     values ($1,$2,5.4,'{"scale":[0,6],"comparable":true,"private":"NEVER-EXPORT"}','2026-02-01','vi',false),
     ($3,$2,6,'{"scale":[0,6],"comparable":true}','2026-02-01','vi',true)`, [places[0], org, places[1]])
@@ -83,11 +91,18 @@ test('only explicitly published, matched and currently confirmed dishes leave HO
   const first = await asRole('authenticated', googleClaims(googleA), readCatalog)
   const second = await asRole('authenticated', googleClaims(googleB), readCatalog)
   assert.deepEqual(first, second)
+  assert.deepEqual(first.restaurants.map(place => [place.id, place.dishes.map(dish => dish.id)]),
+    [[places[0], [confirmedDish]], [places[1], [confirmedDish]]])
   const catalog = approvedCatalog(first)
   assert.deepEqual(catalog.map(place => [place.id, place.dishes.map(dish => dish.id)]),
     [[places[0], [confirmedDish]], [places[1], [confirmedDish]]])
   assert.deepEqual(catalog.map(place => place.score), [90, null])
-  assert.deepEqual(catalog.map(place => place.venueType), ['street_food', null])
+  assert.deepEqual(catalog.map(place => place.venueType), ['street_food', 'street_food'])
+  const optional = catalog[1]
+  assert.deepEqual([optional.budget, optional.capacity, optional.dishes[0].price, optional.dishes[0].meals],
+    [null, null, null, []])
+  assert.ok(first.restaurants[1].dishes[0].verifiedAt)
+  assert.equal(first.restaurants[1].dishes[0].validUntil, null)
   assert.deepEqual(catalog.map(place => place.zone), ['Đà Nẵng', 'Hà Nội'])
   assert.ok(catalog[0].maps.startsWith('https://www.google.com/maps/dir/'))
   assert.deepEqual(catalog[0].issues, [{ vi: 'Ồn ào', fr: 'Bruit' }])
@@ -119,16 +134,18 @@ test('catalog access needs a verified Google claim and readers cannot read or ed
 })
 
 test('the real frontend API filters by meal and zone, ranks confirmed habits and refreshes withdrawn places', async () => {
-  const offer = (id, name, meal = 'lunch') => ({ id, name, confirmed: true, enabled: true, validUntil: '2090-01-01',
-    family: 'noodles', meals: [meal] })
+  const offer = (id, name, meal = 'lunch') => ({ id, name, confirmed: true, enabled: true,
+    verifiedAt: new Date().toISOString(), family: 'noodles', meals: meal ? [meal] : [] })
   const pho = offer('pho', 'Phở')
   const restaurants = [
-    { id: 'a', name: 'A', published: true, zone: 'Đà Nẵng', latitude: 16.023, longitude: 108.23, homeScore: 90,
+    { id: 'a', name: 'A', published: true, zone: 'Đà Nẵng', venueType: 'street_food', latitude: 16.023, longitude: 108.23, homeScore: 90,
       maxGroupSize: 4, budgetPerPersonVnd: 60000, recurringIssues: ['Chờ lâu', 'Đông đúc'],
       dishes: [pho, offer('rice','Cơm'), offer('roll','Cuốn'), offer('soup','Canh')] },
-    { id: 'b', name: 'B', published: true, zone: 'Đà Nẵng', latitude: 16.024, longitude: 108.23, homeScore: 85,
+    { id: 'b', name: 'B', published: true, zone: 'Đà Nẵng', venueType: 'street_food', latitude: 16.024, longitude: 108.23, homeScore: 85,
       maxGroupSize: 4, budgetPerPersonVnd: 60000, dishes: [pho] },
-    { id: 'c', name: 'C', published: true, zone: 'Hà Nội', dishes: [offer('chao','Cháo','breakfast')] },
+    { id: 'c', name: 'C', published: true, zone: 'Hà Nội', venueType: 'street_food', dishes: [offer('chao','Cháo','breakfast')] },
+    { id: 'd', name: 'D', published: true, zone: 'Đà Nẵng', venueType: 'street_food', dishes: [offer('can','Bánh căn',null)] },
+    { id: 'e', name: 'E', published: true, zone: 'Hồ Chí Minh', venueType: 'restaurant', dishes: [pho] },
   ]
   let current = restaurants
   const entry = { meal_date: '2026-11-24', meal_slot: 'lunch', status: 'planned',
@@ -147,10 +164,12 @@ test('the real frontend API filters by meal and zone, ranks confirmed habits and
   assert.deepEqual(detail.suggestions[0].restaurants.map(place => place.id), ['b','a'])
   assert.ok(detail.suggestions[0].restaurants.every(place => place.distanceKm > 0))
   assert.deepEqual((await api('today','POST',{ ...body, zone: 'Hà Nội' })).suggestions, [])
+  assert.deepEqual((await api('today','POST',{ ...body, zone: 'Hồ Chí Minh' })).suggestions, [])
   assert.deepEqual((await api('today','POST',{ ...body, zone: 'Ha Noi', meal: 'breakfast' })).suggestions.map(dish => dish.id), ['chao'])
   const outing = await api('outing','POST',{ zone: 'Da Nang', party: 2, budget: 130000, wish: 'phở' })
-  assert.deepEqual(outing.suggestions.map(place => place.id), ['b','a'])
-  assert.deepEqual((await api('outing','POST',{ zone: 'Da Nang', party: 5, budget: 400000 })).suggestions, [])
+  assert.deepEqual(outing.suggestions.map(place => place.id), ['b','a','d'])
+  const [unknown] = (await api('outing','POST',{ zone: 'Da Nang', party: 5, budget: 400000 })).suggestions
+  assert.deepEqual([unknown.id, unknown.total, unknown.capacity, unknown.score], ['d', null, null, null])
   current = restaurants.filter(place => place.id !== 'a')
   assert.deepEqual((await api('today','POST',{ ...body, detailId: 'pho' })).suggestions[0].restaurants.map(place => place.id), ['b'])
   current = []
