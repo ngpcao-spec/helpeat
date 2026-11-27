@@ -193,7 +193,7 @@ test('Postgres reserves once and keeps the cache and metrics inaccessible to rea
   try {
     await db.exec(`create schema private; create schema auth; create role anon; create role authenticated; create role service_role;
       create table auth.users(id uuid primary key);`)
-    await db.exec(await readFile(new URL('../supabase/migrations/20261127015142_helpeat_daily_ai.sql', import.meta.url), 'utf8'))
+    await db.exec(await readFile(new URL('../supabase/migrations/20261127020246_helpeat_daily_ai.sql', import.meta.url), 'utf8'))
     await db.query('insert into auth.users values ($1),($2)', [A, B])
     const reserve = async (user, refresh = null, count = 3) => (await db.query(
       "select public.helpeat_daily_ai_reserve($1,'context',$2,'lunch','gpt-5.5','high',$3) result",
