@@ -115,6 +115,7 @@ function harness(initialFormat = 'compact_v1') {
   let menus = catalog()
   let meals = profiles[1]
   let format = initialFormat
+  let model = 'gpt-5.5'
   let disabled = false
   let fail = false
   const calls = []
@@ -129,7 +130,7 @@ function harness(initialFormat = 'compact_v1') {
       if (!['Bearer accountA', 'Bearer accountB'].includes(options.headers.Authorization)) return Response.json({}, { status: 401 })
       return Response.json({ id, app_metadata: { provider: 'google' } })
     }
-    if (path.endsWith('/helpeat_daily_ai_config')) return Response.json(disabled ? null : { model: 'gpt-5.5', effort: 'high' })
+    if (path.endsWith('/helpeat_daily_ai_config')) return Response.json(disabled ? null : { model, effort: 'high' })
     if (path.endsWith('/helpeat_catalog')) return Response.json(menus)
     if (path.endsWith('/helpeat_habits')) return Response.json(habits)
     if (path.endsWith('/helpeat_meals')) {
@@ -177,8 +178,52 @@ function harness(initialFormat = 'compact_v1') {
     body: JSON.stringify({ ...target, zone: 'Khánh Hòa', locale: 'fr', ...overrides }),
   })).then(response => response.json())
   return { call, calls, finishes, menu: value => { menus = value }, history: value => { meals = value },
-    format: value => { format = value }, disabled: () => { disabled = true }, fail: () => { fail = true } }
+    format: value => { format = value }, model: value => { model = value },
+    disabled: () => { disabled = true }, fail: () => { fail = true } }
 }
+
+test('switching models keeps the GPT-5.5 cache key and only sends new requests to the chosen model', async () => {
+  const h = harness()
+  const baseline = await h.call()
+  assert.equal(h.calls[0].model, 'gpt-5.5')
+  h.model('gpt-6.1-terra')
+  assert.deepEqual(await h.call(), baseline)
+  assert.equal(h.calls.length, 1)
+
+  const refreshed = await h.call({ refreshFrom: baseline.id })
+  assert.equal(refreshed.state, 'ai')
+  assert.equal(h.calls[1].model, 'gpt-6.1-terra')
+  assert.deepEqual(h.calls[1].reasoning, { effort: 'high' })
+  assert.equal(h.calls[1].instructions, prompt)
+  assert.ok(refreshed.recommendations.every(dish => !baseline.recommendations.some(old => old.dish_id === dish.dish_id)))
+  assert.equal(h.finishes[1].p_usage.estimatedUsd, 0.0066)
+
+  h.model('gpt-6-luna')
+  assert.deepEqual(await h.call(), refreshed)
+  assert.equal(h.calls.length, 2)
+  const inVietnamese = await h.call({ locale: 'vi' })
+  assert.equal(h.calls[2].model, 'gpt-6-luna')
+  assert.equal(h.finishes[2].p_usage.estimatedUsd, 0.00066)
+
+  h.model('gpt-5.5')
+  assert.deepEqual(await h.call({ locale: 'vi' }), inVietnamese)
+  assert.equal(h.calls.length, 3)
+})
+
+test('standard Terra and Luna pricing counts cache reads and writes once and includes reasoning in output', () => {
+  const response = { usage: { input_tokens: 10000, output_tokens: 1000,
+    input_tokens_details: { cached_tokens: 2000, cache_write_tokens: 4000,
+      cache_write_tokens_details: { ttl_30m_tokens: 3000, ttl_12h_tokens: 1000 } },
+    output_tokens_details: { reasoning_tokens: 800 },
+  } }
+  assert.deepEqual(usageMetrics(response, 'gpt-6.1-terra'), {
+    input: 10000, cached: 2000, output: 1000, reasoning: 800, estimatedUsd: 0.01535, actualUsd: null,
+  })
+  assert.equal(usageMetrics(response, 'gpt-6-luna').estimatedUsd, 0.001545)
+  assert.equal(usageMetrics({ usage: { input_tokens: 272001, output_tokens: 1000,
+    input_tokens_details: { cached_tokens: 1000 } } }, 'gpt-6.1-terra').estimatedUsd, 0.549602)
+  assert.equal(usageMetrics({ status: 'failed' }, 'gpt-6.1-terra').estimatedUsd, null)
+})
 
 test('switching formats reuses existing results and can return to the original payload', async () => {
   const h = harness('legacy')
