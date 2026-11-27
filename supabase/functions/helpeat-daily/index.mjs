@@ -1,5 +1,6 @@
 import { nextMeal, vietnamTime } from '../../../public/time.mjs'
-import { checkedRecommendations, prompt, providerRequest, recommendationContext, usageMetrics } from './recommendation.mjs'
+import { compactProviderRequest, resolveCompactRecommendations } from './compact-request.mjs'
+import { checkedRecommendations, prepareRecommendationContext, prompt, providerRequest, usageMetrics } from './recommendation.mjs'
 
 const origin = 'https://ngpcao-spec.github.io'
 const providerUrl = 'https://api.openai.com/v1/responses'
@@ -103,11 +104,12 @@ export function createHandler(env, network = fetch, clock = () => new Date()) {
         supabase('/rest/v1/helpeat_meals?' + query, anon, auth),
       ])
       if (!mealsResponse.ok) return reply({ state: 'fallback' })
-      const context = recommendationContext({
+      const { context, restaurantIdsByDish } = prepareRecommendationContext({
         catalog, habits, meals: await mealsResponse.json(), target, today, zone, coordinates, locale: body.locale,
       })
       if (!context.candidates.length) return reply({ state: 'exhausted' })
-      const reservation = await rpc('helpeat_daily_ai_reserve', {
+      // The cache key describes the recommendation context independently of the provider payload.
+      const reservation = await rpc('helpeat_daily_ai_reserve_for_format', {
         p_user: account.id, p_hash: await hash({ prompt, settings, context }),
         p_refresh: uuid.test(body.refreshFrom) ? body.refreshFrom : null,
         p_meal: target.meal, p_model: settings.model, p_effort: settings.effort, p_candidates: context.candidates.length,
@@ -121,19 +123,29 @@ export function createHandler(env, network = fetch, clock = () => new Date()) {
       const started = performance.now()
       let recommendations = null
       let usage = null
-      let errorCode = 'provider_unavailable'
+      let errorCode = 'invalid_request_context'
       try {
+        const compact = reservation.format_version === 'compact_v1'
+          ? compactProviderRequest(available, restaurantIdsByDish, settings)
+          : null
+        const providerBody = compact?.body ?? providerRequest(available, settings)
+        errorCode = 'provider_unavailable'
         const upstream = await network(providerUrl, {
           method: 'POST', redirect: 'error', signal: AbortSignal.timeout(95000),
           headers: { Authorization: 'Bearer ' + key, 'Content-Type': 'application/json' },
-          body: JSON.stringify(providerRequest(available, settings)),
+          body: JSON.stringify(providerBody),
         })
         if (upstream.ok) {
           const answer = await upstream.json()
           usage = usageMetrics(answer, settings.model)
           const output = answer.output?.flatMap(item => item.content ?? []).find(item => item.type === 'output_text')?.text
           errorCode = 'invalid_response'
-          if (answer.status === 'completed' && output) recommendations = checkedRecommendations(JSON.parse(output), available.candidates)
+          if (answer.status === 'completed' && output) {
+            const result = JSON.parse(output)
+            recommendations = compact
+              ? resolveCompactRecommendations(result, compact, available.candidates)
+              : checkedRecommendations(result, available.candidates)
+          }
         } else {
           errorCode = 'provider_http_' + upstream.status
           await upstream.body?.cancel()
