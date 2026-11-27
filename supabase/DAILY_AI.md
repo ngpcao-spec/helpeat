@@ -8,7 +8,7 @@ La fonction utilise le même secret serveur `OPENAI_API_KEY` et l’intégration
 
 Le catalogue regroupe les adresses par identifiant de plat et conserve tous les candidats jusqu’à 120. Au-delà, la présélection répartit les places entre les restaurants. Le modèle choisit et ordonne les plats. Le moteur classique choisit la première adresse, conserve les autres et fournit les suggestions de secours. Les suggestions du catalogue s’affichent sans explication IA.
 
-Le contexte haché comprend le repas, la zone, la langue, les candidats, le prompt, le modèle et l’historique confirmé. Les distances envoyées sont arrondies au kilomètre et aucune position exacte ni identité de compte ne part à OpenAI. Les modèles reçoivent les noms saisis au journal comme données. Les textes générés sont mis en cache avec les identifiants des plats. Les formats initial et compact partagent la même clé de cache. Les anciens textes sont effacés au prochain passage de l’utilisateur après sept jours. Les résultats sont recroisés avec les candidats du catalogue courant avant affichage.
+Le contexte haché comprend le repas, la zone, la langue, les candidats, le prompt et l’historique confirmé. Les distances envoyées sont arrondies au kilomètre et aucune position exacte ni identité de compte ne part à OpenAI. Les modèles reçoivent les noms saisis au journal comme données. Les textes générés sont mis en cache avec les identifiants des plats. Les formats et modèles pris en charge partagent la clé historique de GPT‑5.5 pour le même niveau de réflexion. Les anciens textes sont effacés au prochain passage de l’utilisateur après sept jours. Les résultats sont recroisés avec les candidats du catalogue courant avant affichage.
 
 La réservation transactionnelle empêche deux appels en parallèle pour un même compte et protège le contexte déjà généré sur plusieurs appareils. Un renouvellement utilise le résultat précédent du même compte et écarte les plats déjà proposés pour ce contexte. Lorsque la liste est épuisée, l’interface l’indique. Le garde-fou autorise 24 tentatives par heure et par pilote. Une erreur est réutilisée pendant cinq minutes avant une nouvelle tentative. Le modèle reçoit un maximum de 8 192 jetons de sortie, réflexion comprise, et le transport attend au plus 95 secondes.
 
@@ -84,6 +84,16 @@ Pour un retour immédiat, régler `format_version` sur `legacy`. Les réservatio
 ~~~sql
 update private.helpeat_daily_ai_config set format_version = 'legacy' where singleton;
 ~~~
+
+Le choix du modèle se fait dans la même configuration. Remplacer `gpt-5.5` par `gpt-6-luna` ou `gpt-6.1-terra` pour choisir un autre modèle. Le changement s’applique aux nouvelles générations. Les recommandations en cache et leurs métriques d’origine sont conservées.
+
+~~~sql
+update private.helpeat_daily_ai_config
+set model = 'gpt-5.5', effort = 'high', format_version = 'compact_v1'
+where singleton;
+~~~
+
+Pour GPT‑6.1 Terra, les tarifs Standard par million de jetons sont de 1 USD en entrée, 0,05 USD pour une lecture du cache OpenAI et 5 USD en sortie. Pour GPT‑6 Luna, ils sont de 0,10 USD, 0,01 USD et 0,50 USD. Les écritures de cache utilisent leur tarif de rétention. Chaque jeton d’entrée est compté dans une seule de ces catégories. La sortie comprend déjà la réflexion. [Tarifs GPT‑6.1 Terra](https://developers.openai.com/api/docs/models/gpt-6.1-terra) · [Tarifs GPT‑6 Luna](https://developers.openai.com/api/docs/models/gpt-6-luna)
 
 L’API Responses fournit les jetons. Les coûts sont estimés à partir des tarifs connus du modèle. La colonne du coût réel reste vide si le fournisseur ne fournit aucun montant par appel. Le tarif standard GPT-5.5 est de 5 USD par million de jetons en entrée, 0,50 USD en cache et 30 USD en sortie. À 12 000 jetons d’entrée sans cache et 2 500 jetons de sortie, neuf appels coûtent environ **1,22 USD**. À 24 000 jetons d’entrée et 8 192 jetons de sortie par appel, la même campagne serait estimée à **3,29 USD**. Il s’agit de deux hypothèses de volume. [Tarifs GPT-5.5](https://developers.openai.com/api/docs/models/gpt-5.5)
 

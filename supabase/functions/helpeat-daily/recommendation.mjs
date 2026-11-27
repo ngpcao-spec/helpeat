@@ -108,15 +108,33 @@ export function checkedRecommendations(result, candidates) {
 }
 
 const tokens = value => Number.isSafeInteger(value) && value >= 0 ? value : null
+const standardRates = new Map([
+  ['gpt-5.5', { input: 5, cached: 0.5, output: 30 }],
+  ['gpt-6.1-terra', { input: 1, cached: 0.05, output: 5, pricedWrites: true }],
+  ['gpt-6-luna', { input: 0.1, cached: 0.01, output: 0.5, pricedWrites: true }],
+])
+
 export function usageMetrics(response, model) {
   const input = tokens(response?.usage?.input_tokens)
-  const cached = tokens(response?.usage?.input_tokens_details?.cached_tokens)
+  const details = response?.usage?.input_tokens_details
+  const cached = tokens(details?.cached_tokens)
   const output = tokens(response?.usage?.output_tokens)
   const reasoning = tokens(response?.usage?.output_tokens_details?.reasoning_tokens)
-  const cacheHits = Math.min(input ?? 0, cached ?? 0)
-  const longContext = input > 272000
-  const estimatedUsd = /^gpt-5[.]5(?:-2026-04-23)?$/.test(model) && input != null && output != null
-    ? (((input - cacheHits) * 5 + cacheHits * 0.5) * (longContext ? 2 : 1) + output * 30 * (longContext ? 1.5 : 1)) / 1_000_000
-    : null
+  const rates = standardRates.get(model === 'gpt-5.5-2026-04-23' ? 'gpt-5.5' : model)
+  let estimatedUsd = null
+  if (rates && input != null && output != null) {
+    const cacheHits = Math.min(input, cached ?? 0)
+    const writes12h = tokens(details?.cache_write_tokens_details?.ttl_12h_tokens) ?? 0
+    const writes30m = tokens(details?.cache_write_tokens_details?.ttl_30m_tokens) ?? 0
+    const reportedWrites = tokens(details?.cache_write_tokens) ?? (writes30m + writes12h)
+    const totalWrites = rates.pricedWrites ? Math.min(input - cacheHits, reportedWrites) : 0
+    const longWrites = Math.min(totalWrites, writes12h)
+    const ordinaryInput = input - cacheHits - totalWrites
+    const inputCost = (ordinaryInput + (totalWrites - longWrites) * 1.25 + longWrites * 2.5) * rates.input
+      + cacheHits * rates.cached
+    const longContext = input > 272000
+    // The API already includes reasoning tokens in output_tokens.
+    estimatedUsd = (inputCost * (longContext ? 2 : 1) + output * rates.output * (longContext ? 1.5 : 1)) / 1_000_000
+  }
   return { input, cached, output, reasoning, estimatedUsd, actualUsd: null }
 }

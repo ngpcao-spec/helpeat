@@ -108,9 +108,10 @@ export function createHandler(env, network = fetch, clock = () => new Date()) {
         catalog, habits, meals: await mealsResponse.json(), target, today, zone, coordinates, locale: body.locale,
       })
       if (!context.candidates.length) return reply({ state: 'exhausted' })
-      // The cache key describes the recommendation context independently of the provider payload.
+      // Keep the historical GPT-5.5 key so a model switch reuses already-generated recommendations.
+      const cacheSettings = { model: 'gpt-5.5', effort: settings.effort }
       const reservation = await rpc('helpeat_daily_ai_reserve_for_format', {
-        p_user: account.id, p_hash: await hash({ prompt, settings, context }),
+        p_user: account.id, p_hash: await hash({ prompt, settings: cacheSettings, context }),
         p_refresh: uuid.test(body.refreshFrom) ? body.refreshFrom : null,
         p_meal: target.meal, p_model: settings.model, p_effort: settings.effort, p_candidates: context.candidates.length,
       }, true)
