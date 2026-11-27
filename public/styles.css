@@ -151,13 +151,19 @@ select {
 .back { display: inline-flex; gap: .35rem; align-items: center; color: var(--accent); margin-bottom: 1rem; }
 .suggestions { display: grid; }
 .suggestion {
-  padding: .7rem; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center;
-  gap: .8rem; border-radius: 12px; margin: .35rem;
+  padding: .7rem; display: grid; grid-template-columns: clamp(3.5rem, 19vw, 5.5rem) minmax(0, 1fr);
+  align-items: start; gap: .8rem; border-radius: 12px; margin: .35rem;
 }
 .suggestion:hover { background: #342b22; }
-.suggestion strong { color: var(--accent); font-size: .875rem; }
-.dish-image, .dish-placeholder { width: 64px; height: 60px; border-radius: 9px; object-fit: cover; }
+.suggestion-info { overflow-wrap: anywhere; }
+.suggestion-info small { display: block; margin-top: .25rem; }
+.suggestion-price { display: block; margin-top: .15rem; color: var(--accent); font-size: .875rem; }
+.suggestion-reason { margin-top: .3rem; }
+.suggestion-thumbnail { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 9px; }
+.suggestion-image, .dish-placeholder { position: absolute; inset: 0; width: 100%; height: 100%; }
+.suggestion-image { object-fit: cover; }
 .dish-placeholder { display: grid; place-items: center; background: #332a20; color: var(--accent); }
+.suggestion-photo-label { display: block; margin-top: .25rem; font-size: .7rem; line-height: 1.25; }
 .detail-photo { display: block; width: 100%; max-height: 290px; object-fit: cover; border-radius: 17px; margin-bottom: 1rem; }
 .restaurant .button { margin-top: .8rem; }
 .restaurant details { font-size: .9rem; margin: .55rem 0; color: var(--muted); }

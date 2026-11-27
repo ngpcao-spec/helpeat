@@ -170,6 +170,32 @@ function currentMeal() {
     + '</aside>'
 }
 
+function suggestionMedia(dish, restaurant) {
+  const image = dish.image || restaurant.photo
+  const backup = dish.image && restaurant.photo !== dish.image ? restaurant.photo : ''
+  return '<div class="suggestion-media"><div class="suggestion-thumbnail">'
+    + '<span class="dish-placeholder" aria-hidden="true">' + icon('bowl') + '</span>'
+    + (image ? '<img class="suggestion-image" src="' + esc(image) + '" alt="" loading="lazy" decoding="async"'
+      + ' referrerpolicy="no-referrer"' + (backup ? ' data-backup="' + esc(backup) + '"' : '') + '>' : '')
+    + '</div>' + (restaurant.photo
+      ? '<small class="suggestion-photo-label"' + (dish.image ? ' hidden' : '') + '>' + t('restaurantPhoto') + '</small>' : '')
+    + '</div>'
+}
+
+main.addEventListener('error', ({ target: image }) => {
+  if (!image.matches?.('.suggestion-image')) return
+  const label = image.closest('.suggestion-media').querySelector('.suggestion-photo-label')
+  const backup = image.dataset.backup
+  if (backup) {
+    delete image.dataset.backup
+    if (label) label.hidden = false
+    image.src = backup
+  } else {
+    if (label) label.hidden = true
+    image.remove()
+  }
+}, true)
+
 function dailySuggestions() {
   const data = state.daily
   if (state.loading === 'today' && !data) return empty('clock', t('loading'), '')
@@ -184,11 +210,11 @@ function dailySuggestions() {
     + '<div class="suggestions">' + data.suggestions.map(dish => {
     const first = dish.restaurants[0]
     return '<a class="suggestion" href="#dish/' + esc(dish.id) + '">'
-      + (dish.image ? '<img class="dish-image" src="' + esc(dish.image) + '" alt="" loading="lazy">' : '<div class="dish-placeholder">' + icon('bowl') + '</div>')
-      + '<div><h3>' + esc(name(dish.name)) + '</h3><p>' + esc(name(first.name)) + '</p>'
-      + (dish.reason ? '<p>' + esc(dish.reason) + '</p>' : '')
-      + (realMode && first.score == null ? '<p>' + t('scoreUnavailable') + '</p>' : '') + demoTag() + '</div>'
-      + (first.price == null ? '' : '<strong>' + esc(priceRange(first)) + '</strong>') + '</a>'
+      + suggestionMedia(dish, first)
+      + '<div class="suggestion-info"><h3>' + esc(name(dish.name)) + '</h3><p>' + esc(name(first.name)) + '</p>'
+      + (first.price == null ? '' : '<strong class="suggestion-price">' + esc(priceRange(first)) + '</strong>')
+      + (dish.reason ? '<p class="suggestion-reason">' + esc(dish.reason) + '</p>' : '')
+      + (realMode && first.score == null ? '<small>' + t('scoreUnavailable') + '</small>' : '') + demoTag() + '</div></a>'
   }).join('') + '</div>'
 }
 
