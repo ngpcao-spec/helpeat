@@ -86,6 +86,18 @@ export function createRealApi(config, base, client = createClient(config.url, co
   auth: { flowType: 'pkce', detectSessionInUrl: true, persistSession: true, autoRefreshToken: true, storageKey },
 }), gate = config.pilotHashes ? homePilotGate(config) : null) {
   let catalogRequest
+  const dailyRequests = new Map()
+
+  function getDailySelection({ date, meal, zone, coordinates, locale, refreshFrom }) {
+    if (!client.functions) return null
+    const body = { date, meal, zone, coordinates, locale, refreshFrom }
+    const key = JSON.stringify(body)
+    if (!dailyRequests.has(key)) {
+      dailyRequests.set(key, client.functions.invoke('helpeat-daily', { body, timeout: 115000 })
+        .catch(() => null).finally(() => dailyRequests.delete(key)))
+    }
+    return dailyRequests.get(key)
+  }
 
   async function getCatalog() {
     // Share concurrent reads without keeping withdrawn restaurants in a client cache.
@@ -178,9 +190,27 @@ export function createRealApi(config, base, client = createClient(config.url, co
         const places = area.map(place => ({ ...place, dishes: place.dishes.filter(dish => dish.id === body.detailId) }))
         return { ...response, suggestions: dailyCandidates(places, body.meal, [], body.coordinates) }
       }
-      const habits = await client.rpc('helpeat_habits')
-      const suggestions = dailyCandidates(area, body.meal, habits.data ?? [], body.coordinates, body.exclude).slice(0, 3)
-      return { ...response, suggestions }
+      const [habits, selection] = await Promise.all([
+        client.rpc('helpeat_habits'),
+        getDailySelection(body),
+      ])
+      const eligible = dailyCandidates(area, body.meal, habits.data ?? [], body.coordinates, [], Infinity)
+      const byId = new Map(eligible.map(dish => [dish.id, dish]))
+      const result = selection?.data
+      if (!selection?.error && result?.state === 'ai' && Array.isArray(result.recommendations)) {
+        const picks = result.recommendations
+        if (picks.length > 0 && picks.length <= 3 && new Set(picks.map(item => item?.dish_id)).size === picks.length
+          && picks.every(item => byId.has(item?.dish_id) && typeof item.reason === 'string')) {
+          return { ...response, source: 'ai', aiId: result.id,
+            suggestions: picks.map(item => ({ ...byId.get(item.dish_id), reason: item.reason })) }
+        }
+      }
+      const fresh = eligible.filter(dish => !body.exclude?.includes(dish.id))
+      if (body.refresh && (result?.state === 'exhausted' || (!fresh.length && eligible.length))) {
+        return { ...response, source: 'fallback', exhausted: true, preserveAI: result?.state === 'exhausted',
+          suggestions: (body.previousIds ?? []).filter(id => byId.has(id)).map(id => byId.get(id)) }
+      }
+      return { ...response, source: 'fallback', suggestions: (fresh.length ? fresh : eligible).slice(0, 3) }
     }
     if (path === 'outing') {
       const { status, restaurants } = await getCatalog()

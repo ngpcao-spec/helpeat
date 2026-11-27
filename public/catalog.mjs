@@ -164,7 +164,7 @@ function historyWeight(history, dish, meal) {
   return weight
 }
 
-export function dailyCandidates(restaurants, meal, history, coordinates, excluded = []) {
+export function dailyCandidates(restaurants, meal, history, coordinates, excluded = [], limit = 12) {
   const groups = new Map()
   for (const restaurant of restaurants) {
     for (const dish of restaurant.dishes) {
@@ -191,7 +191,7 @@ export function dailyCandidates(restaurants, meal, history, coordinates, exclude
   }).sort((a, b) => b.score - a.score || a.id.localeCompare(b.id))
 
   const fresh = candidates.filter(candidate => !excluded.includes(candidate.id))
-  return (fresh.length ? fresh : candidates).slice(0, 12)
+  return (fresh.length ? fresh : candidates).slice(0, limit)
 }
 
 export function groupCandidates(restaurants, party, budget, wish = '', coordinates) {

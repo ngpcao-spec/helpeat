@@ -1,6 +1,7 @@
 import { icon } from './icons.mjs'
 import { slots, translations } from './copy.mjs'
 import { createDemoApi, samplePhoto, staticDemo } from './demo.mjs'
+import { nextMeal } from './time.mjs'
 
 const main = document.querySelector('#content')
 const header = document.querySelector('#header')
@@ -178,11 +179,14 @@ function dailySuggestions() {
   if (!data.hasArea) return empty('pin', t('noAreaTitle'), t('noArea'), button('area', t('chooseArea'), 'pin'))
   if (!data.suggestions.length) return empty('bowl', t('catalogTitle'), t('empty'),
     realMode ? button('area', t('changeArea'), 'pin') : '')
-  return '<div class="suggestions">' + data.suggestions.map(dish => {
+  return (data.exhausted ? '<p role="status">' + t('noMoreDishes') + '</p>' : '')
+    + (data.source === 'fallback' && realMode ? '<p role="status">' + t('classicSuggestions') + '</p>' : '')
+    + '<div class="suggestions">' + data.suggestions.map(dish => {
     const first = dish.restaurants[0]
     return '<a class="suggestion" href="#dish/' + esc(dish.id) + '">'
       + (dish.image ? '<img class="dish-image" src="' + esc(dish.image) + '" alt="" loading="lazy">' : '<div class="dish-placeholder">' + icon('bowl') + '</div>')
       + '<div><h3>' + esc(name(dish.name)) + '</h3><p>' + esc(name(first.name)) + '</p>'
+      + (dish.reason ? '<p>' + esc(dish.reason) + '</p>' : '')
       + (realMode && first.score == null ? '<p>' + t('scoreUnavailable') + '</p>' : '') + demoTag() + '</div>'
       + (first.price == null ? '' : '<strong>' + esc(priceRange(first)) + '</strong>') + '</a>'
   }).join('') + '</div>'
@@ -191,7 +195,7 @@ function dailySuggestions() {
 function today() {
   return hero(true) + '<div class="daily-grid"><section><div class="section-heading"><div><h2>' + t('recommendations') + '</h2>'
     + '<p>' + t(state.session.demo ? 'demoSource' : 'source') + '</p></div>'
-    + button('refresh', t('refresh'), 'redo', 'secondary', state.loading === 'today' ? 'disabled' : '')
+    + button('refresh', t(realMode ? 'aiRefresh' : 'refresh'), 'redo', 'secondary', state.loading === 'today' ? 'disabled' : '')
     + '</div><div class="panel recommendation-panel">' + dailySuggestions() + '</div></section>'
     + currentMeal() + '</div>'
 }
@@ -368,6 +372,7 @@ function zoneOptions() {
 
 async function daily(exclude = false) {
   const request = ++state.dailyRequest
+  const last = state.daily
   const previous = state.daily?.suggestions ?? []
   if (exclude) state.exclude = [...new Set([...state.exclude, ...previous.map(item => item.id)])].slice(-60)
   state.loading = 'today'
@@ -377,9 +382,17 @@ async function daily(exclude = false) {
     const detailId = ['dish', 'addresses'].includes(screen) ? id : ''
     const data = await api('today', 'POST', {
       ...state.target, coordinates: state.coordinates, zone: state.preferences.zone, detailId,
-      exclude: detailId ? [] : state.exclude,
+      exclude: detailId ? [] : state.exclude, locale: state.locale, refresh: exclude,
+      refreshFrom: exclude ? last?.aiId : null, previousIds: exclude ? previous.map(dish => dish.id) : [],
     })
-    if (request === state.dailyRequest) state.daily = data
+    if (request === state.dailyRequest) {
+      if (data.preserveAI && last?.source === 'ai') {
+        data.source = 'ai'
+        data.aiId = last.aiId
+        data.suggestions = data.suggestions.map(dish => ({ ...dish, reason: previous.find(item => item.id === dish.id)?.reason }))
+      }
+      state.daily = data
+    }
   } catch (error) {
     if (request === state.dailyRequest) state.daily = { error: error.message }
   } finally {
@@ -549,6 +562,7 @@ async function finishPhoto(form, images) {
 
 async function refreshAfterMeal() {
   state.habits = null
+  state.exclude = []
   if (route().screen === 'journal') return loadJournal()
   if (route().screen !== 'today') location.hash = 'today'
   else await daily()
@@ -605,6 +619,7 @@ async function action(element) {
       state.locale = state.locale === 'fr' ? 'vi' : 'fr'
       localStorage.setItem(locationPreference, state.locale)
       render()
+      if (realMode && route().screen === 'today') void daily()
     },
     'select-language': () => savePreferences({ locale }),
     refresh: () => daily(true),
@@ -863,7 +878,7 @@ async function syncVisibleApp() {
       state.exclude = []
       state.daily = null
     }
-    if ((changedMeal || realMode) && route().screen === 'today' && !dialog.open) await daily()
+    if ((changedMeal || (realMode && state.loading !== 'today')) && route().screen === 'today' && !dialog.open) await daily()
     if ((changedDay || realMode) && route().screen === 'journal' && !dialog.open) await loadJournal()
     if (realMode && route().screen === 'account' && !dialog.open) {
       state.preferences = fresh.account.preferences
@@ -878,5 +893,10 @@ async function syncVisibleApp() {
 
 document.addEventListener('visibilitychange', syncVisibleApp)
 window.addEventListener('focus', syncVisibleApp)
+if (realMode) setInterval(() => {
+  if (!signedIn() || state.notificationTarget || document.hidden || dialog.open || route().screen !== 'today') return
+  const upcoming = nextMeal()
+  if (upcoming.date !== state.target.date || upcoming.meal !== state.target.meal) void syncVisibleApp()
+}, 60_000)
 
 void initialize()
