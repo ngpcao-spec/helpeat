@@ -41,7 +41,7 @@ before(async () => {
   await db.exec(`create table private.dish_images(
     dish_id uuid primary key,image_url text,image_source text,image_storage_path text);
     alter table private.dish_images enable row level security;`)
-  await db.exec(await read('../supabase/migrations/20261127130412_helpeat_main_dish_images.sql'))
+  await db.exec(await read('../supabase/migrations/20261127132027_helpeat_main_dish_images.sql'))
   await query('insert into auth.users (id) values ($1),($2),($3)', [owner, googleA, googleB])
   const [{ id: org }] = (await query('select id from public.organizations where created_by=$1', [owner])).rows
   await query("insert into private.dish_names values ($1,'Phở'),($2,'Bún'),($3,'Cơm')", [phoDish, bunDish, disabledDish])
