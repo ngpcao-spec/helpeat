@@ -35,14 +35,14 @@ export function homeCatalog(payload) {
   if (payload?.source !== 'HOME Reviews' || payload.version !== 1 || !Array.isArray(payload.restaurants)) {
     throw new Error('Invalid HOME Reviews export')
   }
-  return readRestaurants(payload.restaurants.filter(place => place?.venueType === 'street_food'))
+  return readRestaurants(payload.restaurants.filter(place => place?.venueType === 'street_food'), true)
 }
 
 export function demoCatalog(restaurants) {
   return readRestaurants(restaurants)
 }
 
-function readRestaurants(items) {
+function readRestaurants(items, useMainDishImage = false) {
   const restaurants = new Map()
   for (const item of items) {
     if (!item || typeof item.id !== 'string' || !key.test(item.id)) continue
@@ -51,7 +51,8 @@ function readRestaurants(items) {
     if (!label(name)) continue
     const dishes = []
     const seen = new Set()
-    for (const dish of Array.isArray(item.dishes) ? item.dishes : []) {
+    const publishedDishes = Array.isArray(item.dishes) ? item.dishes : []
+    for (const dish of publishedDishes) {
       if (dish?.enabled !== true) continue
       const dishName = localized(dish.name)
       if (typeof dish.id !== 'string' || !key.test(dish.id) || !label(dishName) || seen.has(dish.id)) continue
@@ -68,10 +69,15 @@ function readRestaurants(items) {
       })
     }
     if (!dishes.length) continue
+    const specialty = localized(item.specialty)
+    // HOME Reviews publishes the active specialty first when it provides its name.
+    const first = dishes[0]
+    const mainDishImage = useMainDishImage && publishedDishes[0]?.enabled === true && publishedDishes[0].id === first.id
+      && label(first.name) === label(specialty) && first.imageSource === 'ai_generated' ? first.image : ''
     const scoreMax = number(item.homeScoreMax, 1, Infinity) ?? 100
     restaurants.set(item.id, {
       id: item.id, name, zone, address: text(item.address), maps: httpsUrl(item.mapsUrl),
-      venueType: item.venueType ?? null, specialty: localized(item.specialty), photo: httpsUrl(item.photoUrl),
+      venueType: item.venueType ?? null, specialty, photo: httpsUrl(item.photoUrl), mainDishImage,
       lat: number(item.latitude, -90, 90), lng: number(item.longitude, -180, 180),
       score: number(item.homeScore, 0, scoreMax), scoreMax,
       budget: number(item.budgetPerPersonVnd, 1, 10_000_000),
@@ -184,6 +190,7 @@ export function dailyCandidates(restaurants, meal, history, coordinates, exclude
     const { restaurant, dish: recommendedDish, score } = places[0]
     return {
       id: dish.id, name: dish.name, family: dish.family, image: recommendedDish.image, imageSource: recommendedDish.imageSource,
+      mainDishImage: restaurant.mainDishImage,
       restaurants: places.map(place => publicRestaurant(place.restaurant, place.dish, coordinates)),
       score: score + Math.min(habit, 8) + (habit === 0 ? 2 : 0),
       familiar: habit > 0,

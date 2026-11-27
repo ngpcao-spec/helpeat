@@ -171,30 +171,34 @@ function currentMeal() {
 }
 
 function suggestionMedia(dish, restaurant, detail = false) {
-  const image = dish.image || restaurant.photo
-  const backup = dish.image && restaurant.photo !== dish.image ? restaurant.photo : ''
-  const illustrated = Boolean(dish.image && dish.imageSource === 'ai_generated')
+  const sources = [
+    { url: dish.mainDishImage, caption: 'mainDishIllustration' },
+    { url: dish.image, caption: dish.imageSource === 'ai_generated' ? 'dishIllustration' : '' },
+    { url: restaurant.photo, caption: 'restaurantPhoto' },
+  ].filter((source, index, all) => source.url && all.findIndex(other => other.url === source.url) === index)
+  const [image, ...backups] = sources
   return '<div class="suggestion-media' + (detail ? ' detail-dish-media' : '') + '"><div class="suggestion-thumbnail">'
     + '<span class="dish-placeholder" aria-hidden="true">' + icon('bowl') + '</span>'
-    + (image ? '<img class="suggestion-image" src="' + esc(image) + '" alt="" loading="lazy" decoding="async"'
-      + ' referrerpolicy="no-referrer"' + (backup ? ' data-backup="' + esc(backup) + '"' : '') + '>' : '')
-    + '</div>' + (illustrated || restaurant.photo
-      ? '<small class="suggestion-photo-label"' + (dish.image && !illustrated ? ' hidden' : '') + '>'
-        + t(illustrated ? 'dishIllustration' : 'restaurantPhoto') + '</small>' : '')
+    + (image ? '<img class="suggestion-image" src="' + esc(image.url) + '" alt="" loading="lazy" decoding="async"'
+      + ' referrerpolicy="no-referrer"' + (backups.length ? ' data-backup="' + esc(JSON.stringify(backups)) + '"' : '') + '>' : '')
+    + '</div>' + (sources.some(source => source.caption)
+      ? '<small class="suggestion-photo-label"' + (image.caption ? '' : ' hidden') + '>'
+        + (image.caption ? t(image.caption) : '') + '</small>' : '')
     + '</div>'
 }
 
 main.addEventListener('error', ({ target: image }) => {
   if (!image.matches?.('.suggestion-image')) return
   const label = image.closest('.suggestion-media').querySelector('.suggestion-photo-label')
-  const backup = image.dataset.backup
+  const [backup, ...remaining] = JSON.parse(image.dataset.backup ?? '[]')
   if (backup) {
-    delete image.dataset.backup
+    if (remaining.length) image.dataset.backup = JSON.stringify(remaining)
+    else delete image.dataset.backup
     if (label) {
-      label.textContent = t('restaurantPhoto')
-      label.hidden = false
+      label.textContent = backup.caption ? t(backup.caption) : ''
+      label.hidden = !backup.caption
     }
-    image.src = backup
+    image.src = backup.url
   } else {
     if (label) label.hidden = true
     image.remove()

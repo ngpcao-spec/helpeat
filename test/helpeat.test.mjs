@@ -67,6 +67,37 @@ test('a shared illustrative image passes through the catalogue without changing 
   assert.equal(amended.find(x => x.id === 'rice').image, '')
 })
 
+test('a secondary recommendation uses the best restaurant’s main dish illustration and keeps its own price', () => {
+  const mainImage = 'https://fixture.supabase.co/storage/v1/object/public/dish-images/main.webp'
+  const otherImage = 'https://fixture.supabase.co/storage/v1/object/public/dish-images/other.webp'
+  const variantImage = 'https://fixture.supabase.co/storage/v1/object/public/dish-images/variant.webp'
+  const main = { ...pho, meals: ['dinner'], imageUrl: mainImage, imageSource: 'ai_generated' }
+  const variant = { ...rice, priceVnd: 45_000, maxPriceVnd: 55_000, imageUrl: variantImage }
+  const first = { ...address, specialty: pho.name, dishes: [main, variant] }
+  const second = { ...address, id: 'b', homeScore: 80, specialty: 'Gỏi cuốn', dishes: [
+    { ...main, id: 'rolls', name: 'Gỏi cuốn', imageUrl: otherImage },
+    { ...variant, priceVnd: 60_000, maxPriceVnd: 65_000 },
+  ] }
+  const recommendation = restaurants => dailyCandidates(homeCatalog({ ...payload, restaurants }), 'lunch', [])[0]
+  const suggested = recommendation([second, first])
+  assert.deepEqual([suggested.id, suggested.name.vi, suggested.mainDishImage, suggested.image],
+    ['rice', 'Cơm tấm', mainImage, variantImage])
+  assert.deepEqual(suggested.restaurants.map(place => [place.id, place.price, place.maxPrice]),
+    [['a', 45_000, 55_000], ['b', 60_000, 65_000]])
+  assert.equal(recommendation([second]).mainDishImage, otherImage)
+
+  for (const missing of [
+    { ...first, specialty: null },
+    { ...first, dishes: [{ ...main, enabled: false }, variant] },
+    { ...first, dishes: [{ ...main, imageSource: null }, variant] },
+    { ...first, dishes: [{ ...main, imageUrl: 'http://fixture.invalid/main.webp' }, variant] },
+  ]) {
+    const fallback = recommendation([second, missing])
+    assert.equal(fallback.mainDishImage, '')
+    assert.equal(fallback.image, variantImage)
+  }
+})
+
 test('old publication fields and unknown service slots do not gate active dishes', () => {
   const recent = { ...pho, meals: [], status: 'proposed' }
   const candidate = { ...address, dishes: [

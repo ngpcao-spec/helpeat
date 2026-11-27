@@ -166,6 +166,7 @@ select {
 .suggestion-photo-label { display: block; margin-top: .25rem; font-size: .7rem; line-height: 1.25; }
 .detail-dish-media { margin-bottom: 1rem; }
 .detail-dish-media .suggestion-thumbnail { aspect-ratio: 2.4; max-height: 290px; border-radius: 17px; }
+.detail-photo { display: block; width: 100%; max-height: 290px; object-fit: cover; border-radius: 17px; margin-bottom: 1rem; }
 .restaurant .button { margin-top: .8rem; }
 .restaurant details { font-size: .9rem; margin: .55rem 0; color: var(--muted); }
 .restaurant summary { cursor: pointer; }
