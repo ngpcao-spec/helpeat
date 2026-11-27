@@ -27,7 +27,11 @@ function diverse(candidates) {
   return result
 }
 
-export function recommendationContext({ catalog, habits, meals, target, today, zone, coordinates, locale }) {
+export function recommendationContext(input) {
+  return prepareRecommendationContext(input).context
+}
+
+export function prepareRecommendationContext({ catalog, habits, meals, target, today, zone, coordinates, locale }) {
   const restaurants = inArea(homeCatalog(catalog), zone, coordinates)
   const eligible = dailyCandidates(restaurants, target.meal, habits ?? [], coordinates, [], Infinity)
   const days = ['breakfast', 'lunch', 'dinner']
@@ -43,21 +47,29 @@ export function recommendationContext({ catalog, habits, meals, target, today, z
       lastSeen.set(key, entry)
     }
   }
-  const candidates = diverse(eligible).sort((a, b) => a.id.localeCompare(b.id)).map(dish => ({
-    dish_id: dish.id, name: label(dish.name),
-    journal_exact_match: lastSeen.get(normalize(label(dish.name))) ?? null,
-    restaurants: dish.restaurants.slice(0, 8).map(place => ({
-      name: label(place.name), specialty: label(place.specialty) ?? null,
-      distance_km: place.distanceKm == null ? null : Math.round(place.distanceKm),
-      price_vnd: place.price, max_price_vnd: place.maxPrice,
-      home_reviews_score: place.score == null ? null : { value: place.score, scale_max: place.scoreMax },
-      weekly_hours: place.hours.length ? place.hours : null,
-    })),
-  }))
+  const restaurantIdsByDish = new Map()
+  const candidates = diverse(eligible).sort((a, b) => a.id.localeCompare(b.id)).map(dish => {
+    const places = dish.restaurants.slice(0, 8)
+    restaurantIdsByDish.set(dish.id, places.map(place => place.id))
+    return {
+      dish_id: dish.id, name: label(dish.name),
+      journal_exact_match: lastSeen.get(normalize(label(dish.name))) ?? null,
+      restaurants: places.map(place => ({
+        name: label(place.name), specialty: label(place.specialty) ?? null,
+        distance_km: place.distanceKm == null ? null : Math.round(place.distanceKm),
+        price_vnd: place.price, max_price_vnd: place.maxPrice,
+        home_reviews_score: place.score == null ? null : { value: place.score, scale_max: place.scoreMax },
+        weekly_hours: place.hours.length ? place.hours : null,
+      })),
+    }
+  })
   return {
-    language: locale === 'fr' ? 'français' : 'tiếng Việt',
-    today_in_vietnam: today, next_meal: target,
-    zone: zone ? normalize(zone) : null, habits, confirmed_meals: history, candidates,
+    context: {
+      language: locale === 'fr' ? 'français' : 'tiếng Việt',
+      today_in_vietnam: today, next_meal: target,
+      zone: zone ? normalize(zone) : null, habits, confirmed_meals: history, candidates,
+    },
+    restaurantIdsByDish,
   }
 }
 

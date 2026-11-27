@@ -8,7 +8,7 @@ La fonction utilise le même secret serveur `OPENAI_API_KEY` et l’intégration
 
 Le catalogue regroupe les adresses par identifiant de plat et conserve tous les candidats jusqu’à 120. Au-delà, la présélection répartit les places entre les restaurants. Le modèle choisit et ordonne les plats. Le moteur classique choisit la première adresse, conserve les autres et fournit les suggestions de secours. Les suggestions du catalogue s’affichent sans explication IA.
 
-Le contexte haché comprend le repas, la zone, la langue, les candidats, le prompt, le modèle et l’historique confirmé. Les distances envoyées sont arrondies au kilomètre et aucune position exacte ni identité de compte ne part à OpenAI. Les modèles reçoivent les noms saisis au journal comme données. Les textes générés sont mis en cache avec les identifiants des plats. Les anciens textes sont effacés au prochain passage de l’utilisateur après sept jours. Les résultats sont recroisés avec les candidats du catalogue courant avant affichage.
+Le contexte haché comprend le repas, la zone, la langue, les candidats, le prompt, le modèle et l’historique confirmé. Les distances envoyées sont arrondies au kilomètre et aucune position exacte ni identité de compte ne part à OpenAI. Les modèles reçoivent les noms saisis au journal comme données. Les textes générés sont mis en cache avec les identifiants des plats. Les formats initial et compact partagent la même clé de cache. Les anciens textes sont effacés au prochain passage de l’utilisateur après sept jours. Les résultats sont recroisés avec les candidats du catalogue courant avant affichage.
 
 La réservation transactionnelle empêche deux appels en parallèle pour un même compte et protège le contexte déjà généré sur plusieurs appareils. Un renouvellement utilise le résultat précédent du même compte et écarte les plats déjà proposés pour ce contexte. Lorsque la liste est épuisée, l’interface l’indique. Le garde-fou autorise 24 tentatives par heure et par pilote. Une erreur est réutilisée pendant cinq minutes avant une nouvelle tentative. Le modèle reçoit un maximum de 8 192 jetons de sortie, réflexion comprise, et le transport attend au plus 95 secondes.
 
@@ -23,11 +23,11 @@ N’invente aucun plat, restaurant, prix, score, horaire, préférence ou souven
 Explique chaque choix en une phrase courte et naturelle, dans la langue demandée, en conservant le nom vietnamien des plats si tu les cites. Utilise uniquement des faits de l’entrée ou une suggestion formulée comme telle. Retourne uniquement le résultat structuré.
 ~~~
 
-Le second message contient le JSON compact du contexte de l’utilisateur. Le code versionné assemble ce message et son schéma strict. [Générateur du prompt et du schéma](functions/helpeat-daily/recommendation.mjs)
+Le second message contient le JSON du contexte de l’utilisateur. En mode compact, chaque restaurant est décrit une fois. Les candidats référencent les restaurants par des identifiants courts et les prix restent sur chaque association plat–restaurant. Le serveur traduit les identifiants courts des plats en UUID avant de mettre le résultat en cache. [Générateur du prompt et du schéma](functions/helpeat-daily/recommendation.mjs) · [Sérialisation compacte](functions/helpeat-daily/compact-request.mjs)
 
 ## Exemple complet du contexte envoyé
 
-Exemple synthétique sans compte réel. Les noms de restaurants et les identifiants servent uniquement au protocole.
+Exemple synthétique du format initial, sans compte réel. Les noms de restaurants et les identifiants servent uniquement au protocole.
 
 ~~~json
 {
@@ -71,6 +71,18 @@ La vue privée `private.helpeat_daily_ai_metrics` agrège les appels, réussites
 
 ~~~sql
 select * from private.helpeat_daily_ai_metrics order by estimated_total_usd desc nulls last;
+~~~
+
+La vue privée par format distingue les tentatives `legacy` et `compact_v1`. La version est enregistrée à la réservation, y compris pour les tentatives qui expirent avant de pouvoir enregistrer leurs métriques. Les réutilisations du cache ne créent pas de nouvelle tentative.
+
+~~~sql
+select * from private.helpeat_daily_ai_metrics_by_format order by model, effort, format_version;
+~~~
+
+Pour un retour immédiat, régler `format_version` sur `legacy`. Les réservations suivantes reprennent le format initial en conservant le cache et les métriques existants. Une tentative déjà réservée garde son format jusqu’à sa fin. Remettre `compact_v1` pour réactiver le format compact.
+
+~~~sql
+update private.helpeat_daily_ai_config set format_version = 'legacy' where singleton;
 ~~~
 
 L’API Responses fournit les jetons. Les coûts sont estimés à partir des tarifs connus du modèle. La colonne du coût réel reste vide si le fournisseur ne fournit aucun montant par appel. Le tarif standard GPT-5.5 est de 5 USD par million de jetons en entrée, 0,50 USD en cache et 30 USD en sortie. À 12 000 jetons d’entrée sans cache et 2 500 jetons de sortie, neuf appels coûtent environ **1,22 USD**. À 24 000 jetons d’entrée et 8 192 jetons de sortie par appel, la même campagne serait estimée à **3,29 USD**. Il s’agit de deux hypothèses de volume. [Tarifs GPT-5.5](https://developers.openai.com/api/docs/models/gpt-5.5)
