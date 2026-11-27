@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { approvedCatalog, dailyCandidates, groupCandidates, inArea } from '../public/catalog.mjs'
+import { dailyCandidates, groupCandidates, homeCatalog, inArea } from '../public/catalog.mjs'
 import { createDemoApi } from '../public/demo.mjs'
 import { rank } from '../server/home-ai.mjs'
 import { buildApp } from '../server/index.mjs'
@@ -11,21 +11,20 @@ import { pushSubscription } from '../server/push.mjs'
 import { createStore } from '../server/store.mjs'
 import { nextMeal, vietnamTime } from '../public/time.mjs'
 
-const verification = { confirmed: true, enabled: true, verifiedAt: new Date().toISOString() }
-const pho = { id: 'pho', name: 'Phở', family: 'noodles', ...verification, meals: ['lunch'] }
-const rice = { id: 'rice', name: 'Cơm tấm', family: 'rice', ...verification, meals: ['lunch'] }
-const address = { id: 'a', name: 'Test A', zone: 'Đà Nẵng', published: true, homeScore: 90,
+const pho = { id: 'pho', name: 'Phở', family: 'noodles', enabled: true, meals: ['lunch'] }
+const rice = { id: 'rice', name: 'Cơm tấm', family: 'rice', enabled: true, meals: ['lunch'] }
+const address = { id: 'a', name: 'Test A', zone: 'Đà Nẵng', homeScore: 90,
   latitude: 16.05, longitude: 108.2, maxGroupSize: 6, budgetPerPersonVnd: 100_000, venueType: 'street_food' }
 const payload = { source: 'HOME Reviews', version: 1, restaurants: [
-  { ...address, secret: 'internal', dishes: [pho, { ...rice, confirmed: false }, { ...rice, validUntil: '2000-01-01' }] },
+  { ...address, secret: 'internal', dishes: [pho, { ...rice, enabled: false }] },
   { ...address, id: 'b', name: 'Test B', homeScore: 75, dishes: [{ ...pho, priceVnd: 70_000 }, rice] },
-  { ...address, id: 'c', published: false, dishes: [rice] },
-  { ...address, id: 'd', venueType: 'restaurant', dishes: [rice] },
+  { ...address, id: 'c', dishes: [] },
+  { ...address, id: 'd', venueType: 'family_dining', dishes: [rice] },
   { ...address, id: 'e', venueType: null, dishes: [rice] },
 ] }
 
-test('only current, confirmed dishes at approved restaurants enter the shortlist', () => {
-  const catalog = approvedCatalog(payload)
+test('only active dishes at HOME Reviews street food restaurants enter the shortlist', () => {
+  const catalog = homeCatalog(payload)
   assert.deepEqual(catalog.map(place => place.id), ['a', 'b'])
   assert.equal(catalog[0].dishes.length, 1)
   assert.equal('secret' in catalog[0], false)
@@ -41,7 +40,7 @@ test('only current, confirmed dishes at approved restaurants enter the shortlist
 })
 
 test('confirmed meals affect the profile and unknown group suitability is kept distinct', () => {
-  const catalog = approvedCatalog(payload)
+  const catalog = homeCatalog(payload)
   const meal = { meal: 'lunch', dishes: [{ name: 'Cơm tấm', family: 'rice' }] }
   assert.equal(dailyCandidates(catalog, 'lunch', [{ ...meal, status: 'planned' }])[0].id, 'pho')
   const history = Array.from({ length: 4 }, () => ({ ...meal, status: 'confirmed' }))
@@ -54,29 +53,24 @@ test('confirmed meals affect the profile and unknown group suitability is kept d
   assert.equal(groupCandidates(catalog, 4, 400_000, '')[0].total, 400_000)
 })
 
-test('dish freshness is independent of commercial dates and service slots', () => {
-  const now = Date.parse('2026-11-25T05:00:00.000Z')
-  const recent = { ...pho, meals: [], verifiedAt: '2026-08-27T05:00:00.001Z' }
+test('old publication fields and unknown service slots do not gate active dishes', () => {
+  const recent = { ...pho, meals: [], status: 'proposed' }
   const candidate = { ...address, dishes: [
     recent,
-    { ...recent, id: 'stale', verifiedAt: '2026-08-27T05:00:00.000Z' },
-    { ...recent, id: 'future', verifiedAt: '2026-11-25T05:00:00.001Z' },
-    { ...recent, id: 'missing', verifiedAt: null },
+    { ...recent, id: 'legacy', confirmed: false, verifiedAt: '2000-01-01', validUntil: '2000-02-01' },
     { ...recent, id: 'disabled', enabled: false },
     { ...recent, id: 'withdrawn', enabled: null },
-    { ...recent, id: 'commercial_end', validUntil: '2026-11-25T05:00:00.000Z' },
   ] }
-  const catalog = approvedCatalog({ ...payload, restaurants: [candidate] }, now)
-  assert.deepEqual(catalog[0].dishes.map(dish => dish.id), ['pho'])
-  assert.equal(catalog[0].dishes[0].verifiedAt, recent.verifiedAt)
+  const catalog = homeCatalog({ ...payload, restaurants: [candidate] })
+  assert.deepEqual(catalog[0].dishes.map(dish => dish.id), ['pho', 'legacy'])
   for (const slot of ['breakfast', 'lunch', 'dinner']) {
-    const [offer] = dailyCandidates(catalog, slot, [])
+    const offer = dailyCandidates(catalog, slot, []).find(dish => dish.id === 'pho')
     assert.deepEqual([offer.id, offer.restaurants[0].mealSlotsKnown, offer.restaurants[0].price], ['pho', false, null])
   }
 })
 
 test('AI may reorder the shortlist but cannot add to it', async () => {
-  const candidates = dailyCandidates(approvedCatalog(payload), 'lunch', [])
+  const candidates = dailyCandidates(homeCatalog(payload), 'lunch', [])
   const ai = async () => ({ ids: ['fabricated', 'rice', 'rice', 'pho'] })
   assert.deepEqual((await rank(ai, 'daily', candidates, {})).map(item => item.id), ['rice', 'pho'])
   assert.deepEqual(await rank(async () => { throw new Error() }, 'daily', candidates, {}), candidates)

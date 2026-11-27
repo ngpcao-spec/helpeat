@@ -25,9 +25,9 @@ const dishes = {
 
 function place(id, name, area, score, budget, capacity, dishIds, issues = []) {
   return {
-    id, name, zone: area, published: true, homeScore: score, maxGroupSize: capacity,
+    id, name, zone: area, homeScore: score, maxGroupSize: capacity,
     budgetPerPersonVnd: budget, recurringIssues: issues,
-    dishes: dishIds.map(id => ({ id, name: names[id], ...dishes[id], confirmed: true })),
+    dishes: dishIds.map(id => ({ id, name: names[id], ...dishes[id], enabled: true })),
   }
 }
 

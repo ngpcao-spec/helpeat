@@ -114,6 +114,7 @@ console.log('Logical restore rehearsal: synthetic Auth users and identities, org
 sql(await read('../../test/fixtures/catalog-sources.sql'))
 sql(await read('../migrations/20261125014237_helpeat_home_catalog.sql'))
 sql(await read('../migrations/20261125051559_helpeat_street_food_catalog.sql'))
+sql(await read('../migrations/20261127004214_helpeat_live_home_catalog.sql'))
 sql(await read('./20261124084826_home_reviews_self_provisioning.sql'))
 assert.equal(sql("select has_function_privilege('authenticated','private.provision_home_user(uuid)','EXECUTE')"), 'f')
 const legacy = await signup('restaurant-legacy')
@@ -205,16 +206,16 @@ assert.equal(sql("select has_function_privilege('authenticated','private.provisi
 console.log('Rollback: legacy signup restored and previous organizations, minimal profiles and the caller-only RPC retained.')
 
 const dishId = uuid(sql("insert into private.dish_names values (gen_random_uuid(),'Bánh căn') returning id;"))
-sql(`update public.establishments set google_id='fixture-cid' where id='${establishment}';
+const classificationId = uuid(sql(`insert into private.menu_dish_ai_runs
+ values (gen_random_uuid(),'fixture-place','succeeded','{"restaurant_type":{"value":"street_food"},"private":"DO-NOT-PUBLISH"}') returning id;`))
+sql(`update public.establishments set google_id='fixture-cid',place_id='fixture-place' where id='${establishment}';
   insert into private.google_place_profiles values ('${establishment}','${existingOrg}',
-    '{"identity":{"name":"Café autorisé","cid":"fixture-cid","city":"Đà Nẵng","address":"12 Rue de test","coordinates":{"latitude":16.023,"longitude":108.23}},"internal":"DO-NOT-PUBLISH"}');
+    '{"identity":{"name":"Café de test","cid":"fixture-cid","place_id":"fixture-place","city":"Đà Nẵng","address":"12 Rue de test","coordinates":{"latitude":16.023,"longitude":108.23}},"internal":"DO-NOT-PUBLISH"}');
   insert into private.restaurant_dishes (scope,dish_id,status,enabled)
-    values ('establishment:${establishment}','${dishId}','confirmed',true);
-  insert into private.helpeat_restaurant_publications (establishment_id,published,reviewed_at,review_reference,venue_type)
-    values ('${establishment}',true,now(),'isolated approval','street_food');
-  insert into private.helpeat_dish_publications
-    (establishment_id,dish_id,association_scope,approved,verified_at,review_reference)
-    values ('${establishment}','${dishId}','establishment:${establishment}',true,now(),'isolated check');`)
+    values ('establishment:${establishment}','${dishId}','proposed',true);
+  insert into private.restaurant_dish_profiles values ('establishment:${establishment}','${dishId}');
+  insert into private.menu_dish_ai_targets values ('establishment:${establishment}','${establishment}',
+    '${classificationId}','${classificationId}','isolated-menu');`)
 
 const catalogA = unwrap(await secondDevice.browser.rpc('helpeat_catalog'), 'Catalog account A')
 const catalogB = unwrap(await b.browser.rpc('helpeat_catalog'), 'Catalog account B')
@@ -222,11 +223,10 @@ assert.deepEqual(catalogA, catalogB)
 assert.deepEqual(catalogA.restaurants.map(place => [place.id, place.dishes[0].id]), [[establishment, dishId]])
 const [streetFood] = catalogA.restaurants
 const [offer] = streetFood.dishes
-assert.deepEqual([streetFood.venueType, streetFood.budgetPerPersonVnd, streetFood.maxGroupSize, streetFood.homeScore],
-  ['street_food', null, null, null])
-assert.deepEqual([offer.meals, offer.priceVnd, offer.validUntil], [[], null, null])
-assert.ok(offer.verifiedAt)
-assert.doesNotMatch(JSON.stringify(catalogA), /DO-NOT-PUBLISH|organization_id|isolated approval/)
+assert.deepEqual([streetFood.venueType, streetFood.specialty, streetFood.homeScore, streetFood.homeScoreMax],
+  ['street_food', 'Bánh căn', null, 6])
+assert.deepEqual([offer.enabled, offer.priceVnd, streetFood.hours], [true, null, []])
+assert.doesNotMatch(JSON.stringify(catalogA), /DO-NOT-PUBLISH|organization_id|isolated-menu/)
 assert.equal((await client(publicKey).rpc('helpeat_catalog')).error?.code, '42501')
 assert.ok((await b.browser.from('restaurant_recommendation_sheets').select('*')).error)
 assert.deepEqual(unwrap(await b.browser.from('establishments').select('id'), 'Foreign HOME establishments'), [])
@@ -235,9 +235,9 @@ assert.deepEqual(nearby.suggestions.map(dish => dish.id), [dishId])
 assert.equal(nearby.suggestions[0].restaurants[0].mealSlotsKnown, false)
 const group = await b.journal.api('outing', 'POST', { zone: 'Da Nang', party: 4, budget: 100000 })
 assert.deepEqual(group.suggestions.map(place => [place.id, place.total, place.capacity]), [[establishment, null, null]])
-sql(`update private.helpeat_restaurant_publications set venue_type='restaurant' where establishment_id='${establishment}';`)
+sql(`update private.menu_dish_ai_runs set result='{"restaurant_type":{"value":"family_dining"}}' where id='${classificationId}';`)
 assert.deepEqual(unwrap(await b.browser.rpc('helpeat_catalog'), 'Outside street food category').restaurants, [])
-sql(`update private.helpeat_restaurant_publications set venue_type='street_food' where establishment_id='${establishment}';`)
-sql(`update private.helpeat_restaurant_publications set published=false where establishment_id='${establishment}';`)
+sql(`update private.menu_dish_ai_runs set result='{"restaurant_type":{"value":"street_food"}}' where id='${classificationId}';`)
+sql(`update private.restaurant_dishes set enabled=false where dish_id='${dishId}';`)
 assert.deepEqual(unwrap(await b.browser.rpc('helpeat_catalog'), 'Catalog withdrawal').restaurants, [])
-console.log('Catalog: two independently signed local Auth sessions read the same approved street food dish with optional facts omitted. Other categories, anonymous and private HOME access denied. Withdrawal immediate.')
+console.log('Catalog: two signed local Auth sessions read the same active AI-classified street food dish. Source changes appear on the next read. Anonymous and private HOME access denied.')

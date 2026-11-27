@@ -34,6 +34,8 @@ const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ({
 const lang = () => state.locale === 'fr' ? 'fr-FR' : 'vi-VN'
 const name = item => item?.[state.locale] || item?.vi || item?.fr || ''
 const price = value => new Intl.NumberFormat(lang(), { style: 'currency', currency: 'VND' }).format(value)
+const priceRange = place => place.maxPrice > place.price
+  ? price(place.price) + ' – ' + price(place.maxPrice) : price(place.price)
 const signedIn = () => Boolean(state.session?.account)
 const among = (value, list) => list.includes(value)
 const shiftDay = (day, shift) => new Date(Date.parse(day) + shift * 86_400_000).toISOString().slice(0, 10)
@@ -182,7 +184,7 @@ function dailySuggestions() {
       + (dish.image ? '<img class="dish-image" src="' + esc(dish.image) + '" alt="" loading="lazy">' : '<div class="dish-placeholder">' + icon('bowl') + '</div>')
       + '<div><h3>' + esc(name(dish.name)) + '</h3><p>' + esc(name(first.name)) + '</p>'
       + (realMode && first.score == null ? '<p>' + t('scoreUnavailable') + '</p>' : '') + demoTag() + '</div>'
-      + (first.price == null ? '' : '<strong>' + esc(price(first.price)) + '</strong>') + '</a>'
+      + (first.price == null ? '' : '<strong>' + esc(priceRange(first)) + '</strong>') + '</a>'
   }).join('') + '</div>'
 }
 
@@ -194,6 +196,18 @@ function today() {
     + currentMeal() + '</div>'
 }
 
+function weeklyHours(hours) {
+  const weekday = new Intl.DateTimeFormat(lang(), { weekday: 'long', timeZone: 'UTC' })
+  const time = minutes => {
+    const hour = minutes === 1440 ? 24 : Math.floor(minutes / 60) % 24
+    return String(hour).padStart(2, '0') + ':' + String(minutes % 60).padStart(2, '0')
+  }
+  return '<details><summary>' + t('weeklyHours') + '</summary><ul>'
+    + hours.map(day => '<li>' + esc(weekday.format(new Date(Date.UTC(2023, 0, 1 + day.day)))) + ' · '
+      + (day.status === 'closed' ? t('closedDay') : day.intervals.map(slot => time(slot.start) + '–' + time(slot.end)).join(', '))
+      + '</li>').join('') + '</ul></details>'
+}
+
 function restaurantCard(place, isGroup = false) {
   const issues = place.issues?.length ? '<details><summary>' + t('issues') + '</summary><ul>'
     + place.issues.map(issue => '<li>' + esc(name(issue)) + '</li>').join('') + '</ul></details>' : ''
@@ -201,14 +215,20 @@ function restaurantCard(place, isGroup = false) {
     style: 'unit', unit: 'kilometer', maximumFractionDigits: 1,
   }).format(place.distanceKm)
   const location = [place.address || place.zone, distance].filter(Boolean).join(' · ')
-  return '<article class="panel restaurant"><div class="section-heading"><div><h3>' + esc(name(place.name)) + '</h3>'
+  const specialty = name(place.specialty)
+  return '<article class="panel restaurant">'
+    + (place.photo ? '<img class="detail-photo" loading="lazy" referrerpolicy="no-referrer" src="'
+      + esc(place.photo) + '" alt="' + esc(name(place.name)) + '">' : '')
+    + '<div class="section-heading"><div><h3>' + esc(name(place.name)) + '</h3>'
     + '<p>' + esc(location) + '</p>'
     + (place.venueType === 'street_food' ? '<p>' + t('streetFood') + '</p>' : '')
+    + (specialty ? '<p>' + t('specialty') + ' · ' + esc(specialty) + '</p>' : '')
     + (realMode && place.score == null ? '<p>' + t('scoreUnavailable') + '</p>' : '') + demoTag() + '</div>'
     + (place.score == null ? '' : '<span class="score" title="' + t(state.session.demo ? 'demoScore' : 'score') + '">'
-      + icon('star') + esc(place.score) + '/100</span>') + '</div>'
-    + (place.price == null ? '' : '<p>' + esc(price(place.price)) + (isGroup ? ' ' + t('perPerson') : '') + '</p>')
-    + (realMode && place.mealSlotsKnown === false ? '<p>' + t('serviceUnknown') + '</p>' : '')
+      + icon('star') + esc(place.score) + '/' + esc(place.scoreMax ?? 100) + '</span>') + '</div>'
+    + (place.price == null ? '' : '<p>' + esc(priceRange(place)) + (isGroup ? ' ' + t('perPerson') : '') + '</p>')
+    + (place.hours?.length ? weeklyHours(place.hours)
+      : realMode && place.mealSlotsKnown === false ? '<p>' + t('serviceUnknown') + '</p>' : '')
     + (isGroup ? (place.total == null ? '<p>' + t('budgetUnknown') + '</p>'
       : '<p>' + t(state.session.demo ? 'demoTotal' : 'estimatedTotal') + ' · <strong>' + esc(price(place.total)) + '</strong></p>')
       + (place.capacity == null ? '<p>' + t('capacityUnknown') + '</p>' : '<p>' + t('capacity') + ' · ' + esc(place.capacity) + '</p>')

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js'
-import { approvedCatalog, dailyCandidates, groupCandidates, inArea, label, normalize } from './catalog.mjs'
+import { dailyCandidates, groupCandidates, homeCatalog, inArea, label, normalize } from './catalog.mjs'
 import { initialTimes, nextMeal, vietnamTime } from './time.mjs'
 
 const storageKey = 'helpeat-supabase-auth-v1'
@@ -93,10 +93,11 @@ export function createRealApi(config, base, client = createClient(config.url, co
       try {
         const { data, error } = await client.rpc('helpeat_catalog')
         if (error) return { status: error.code === 'PGRST202' ? 'unconnected' : 'unavailable', restaurants: [] }
-        const restaurants = approvedCatalog(data).map(place => {
-          if (place.maps || !place.address) return place
+        const restaurants = homeCatalog(data).map(place => {
+          const destination = place.address || (place.lat != null && place.lng != null ? `${place.lat},${place.lng}` : '')
+          if (place.maps || !destination) return place
           const maps = new URL('https://www.google.com/maps/dir/')
-          maps.search = new URLSearchParams({ api: '1', destination: place.address }).toString()
+          maps.search = new URLSearchParams({ api: '1', destination }).toString()
           return { ...place, maps: maps.href }
         })
         return { status: 'ready', restaurants }
@@ -135,7 +136,7 @@ export function createRealApi(config, base, client = createClient(config.url, co
     const name = session.user.user_metadata?.full_name || session.user.user_metadata?.name || ''
     const times = settings ? Object.fromEntries(Object.keys(initialTimes).map(meal => [meal, settings[meal].slice(0, 5)])) : initialTimes
     return {
-      ...common, catalog: catalog.status, zones: [...new Set(catalog.restaurants.map(place => place.zone))].sort(),
+      ...common, catalog: catalog.status, zones: [...new Set(catalog.restaurants.map(place => place.zone).filter(Boolean))].sort(),
       account: { id: claims.sub, name, preferences: {
         locale: profile?.locale || 'vi', zone: profile?.zone || '', times, notify: false,
       } },

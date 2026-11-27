@@ -1,6 +1,6 @@
 # Helpeat
 
-Helpeat est une PWA pour le Vietnam. La démonstration publique propose des données fictives. Le mode réel préparé utilise Supabase Auth et des tables propres à Helpeat dans le projet de HOME Reviews.
+Helpeat est une PWA pour le Vietnam. La démonstration publique propose des données fictives. Le mode pilote utilise Supabase Auth et des tables propres à Helpeat dans le projet de HOME Reviews.
 
 ## Démonstration publique
 
@@ -32,24 +32,13 @@ Le workflow officiel GitHub Pages installe les dépendances, lance les tests, co
 
 Le navigateur utilise le projet existant `ihuztjkblywzjdruusdj`. Supabase Auth gère Google avec PKCE, l’actualisation des jetons et la fermeture de la session utilisée par Helpeat. Le journal et les préférences identifient le propriétaire par `auth.users.id` et appliquent des politiques RLS. Les modifications sont enregistrées dans Supabase et relues sur les autres appareils à l’ouverture ou au retour au premier plan. SQLite est réservé à l’ancien aperçu et aux tests locaux.
 
-Le schéma du journal a été appliqué en production sous la version `20261124082946`. Le mode réel reste fermé au public pendant la préparation de la correction du provisionnement HOME Reviews. Le [dossier de déploiement Auth](supabase/auth-rollout/README.md) détaille les étapes et les vérifications restantes.
+Le schéma du journal a été appliqué en production sous la version `20261124082946`. Le mode réel est accessible aux comptes Google déjà admis au pilote. Le [dossier de déploiement Auth](supabase/auth-rollout/README.md) détaille les étapes et les vérifications restantes.
 
-Les horaires initiaux sont 06:00, 10:00 et 16:30, heure du Vietnam. Le calcul SQL des habitudes relit les repas confirmés des 180 derniers jours. Les modifications et suppressions se reflètent à la lecture suivante. Les recommandations du catalogue réel, la reconnaissance photo réelle et Web Push sont désactivés.
+Les horaires initiaux sont 06:00, 10:00 et 16:30, heure du Vietnam. Le calcul SQL des habitudes relit les repas confirmés des 180 derniers jours. Les modifications et suppressions se reflètent à la lecture suivante. La reconnaissance photo réelle et Web Push restent désactivés.
 
-## Contrat de publication HOME Reviews
+## Catalogue HOME Reviews
 
-Le futur point de lecture du catalogue doit renvoyer une enveloppe JSON contenant `source` égal à `HOME Reviews`, `version` égal à `1` et un tableau `restaurants`. HOME Reviews décide des données publiées. Le lecteur `approvedCatalog` impose les marqueurs `published` et `confirmed` et vérifie la date de validité de chaque association. Les menus bruts, les avis individuels, les identifiants d’organisation et les analyses privées restent dans HOME Reviews.
-
-| Objet | Informations attendues |
-| --- | --- |
-| Restaurant | `id` stable, `published: true`, `name`, `zone`, `dishes`. |
-| Restaurant, champs complémentaires | `address`, `mapsUrl` en HTTPS, `latitude`, `longitude`, `homeScore` sur 100, `maxGroupSize`, `budgetPerPersonVnd`, `recurringIssues` sous forme de libellés agrégés approuvés. |
-| Plat | `id` stable et partagé pour le même plat entre plusieurs adresses, `name`, `confirmed: true` et `validUntil` au format ISO 8601. |
-| Plat, champs complémentaires | `family`, `meals` parmi `breakfast`, `lunch` et `dinner`, `priceVnd`, `imageUrl` en HTTPS. |
-
-Un libellé peut être une chaîne ou un objet avec `vi` et `fr`. Les prix sont exprimés en đồng vietnamiens. Une sortie de groupe nécessite un score, un budget par personne et une capacité confirmés. Helpeat filtre les plats et établissements avant tout appel au modèle. Il vérifie les identifiants du modèle dans la présélection et rend jusqu’à trois résultats.
-
-Le projet HOME Reviews contient des données de collecte et d’analyse. La source de catalogue reste à raccorder dès qu’un export de publication validé est disponible.
+Le mode pilote lit le catalogue de HOME Reviews dans le même projet Supabase. Les restaurants classés street food et leurs plats actifs sont disponibles dès le chargement suivant. Les scores, prix, horaires et capacités s’affichent lorsqu’ils sont disponibles. [Sources et déploiement du catalogue](supabase/CATALOG.md).
 
 ## Connecteur IA HOME Reviews
 

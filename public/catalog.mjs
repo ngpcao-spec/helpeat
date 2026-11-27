@@ -1,7 +1,5 @@
 const meals = new Set(['breakfast', 'lunch', 'dinner'])
 const key = /^[a-zA-Z0-9_-]{1,96}$/
-const cacheDuration = 60_000
-const verificationLifetime = 90 * 24 * 60 * 60 * 1000
 
 export function label(value, locale = 'vi') {
   return value[locale] || value.vi || value.fr
@@ -33,55 +31,54 @@ function number(value, min, max) {
   return Number.isFinite(value) && value >= min && value <= max ? value : null
 }
 
-export function approvedCatalog(payload, now = Date.now()) {
+export function homeCatalog(payload) {
   if (payload?.source !== 'HOME Reviews' || payload.version !== 1 || !Array.isArray(payload.restaurants)) {
     throw new Error('Invalid HOME Reviews export')
   }
-  return readRestaurants(payload.restaurants, now, false)
+  return readRestaurants(payload.restaurants.filter(place => place?.venueType === 'street_food'))
 }
 
 export function demoCatalog(restaurants) {
-  return readRestaurants(restaurants, Date.now(), true)
+  return readRestaurants(restaurants)
 }
 
-function readRestaurants(items, now, demo) {
+function readRestaurants(items) {
   const restaurants = new Map()
   for (const item of items) {
-    if (!item || item.published !== true || typeof item.id !== 'string' || !key.test(item.id)) continue
-    if (!demo && item.venueType !== 'street_food') continue
+    if (!item || typeof item.id !== 'string' || !key.test(item.id)) continue
     const name = localized(item.name)
     const zone = text(item.zone)
-    if (!label(name) || !zone) continue
+    if (!label(name)) continue
     const dishes = []
     const seen = new Set()
     for (const dish of Array.isArray(item.dishes) ? item.dishes : []) {
-      if (!dish || dish.confirmed !== true || (!demo && dish.enabled !== true)) continue
-      const verifiedAt = Date.parse(dish.verifiedAt)
-      const endDate = dish.validUntil == null ? Infinity : Date.parse(dish.validUntil)
-      const expiresAt = demo ? Infinity : Math.min(verifiedAt + verificationLifetime, endDate)
-      if (!demo && (!(verifiedAt <= now) || !(expiresAt > now))) continue
+      if (dish?.enabled !== true) continue
       const dishName = localized(dish.name)
       if (typeof dish.id !== 'string' || !key.test(dish.id) || !label(dishName) || seen.has(dish.id)) continue
       seen.add(dish.id)
+      const price = number(dish.priceVnd, Number.MIN_VALUE, Infinity)
       dishes.push({
         id: dish.id,
         name: dishName,
         family: text(dish.family, 80),
         meals: Array.isArray(dish.meals) ? dish.meals.filter(meal => meals.has(meal)) : [],
-        price: number(dish.priceVnd, 1, 10_000_000),
+        price, maxPrice: price == null ? null : number(dish.maxPriceVnd, price, Infinity),
         image: httpsUrl(dish.imageUrl),
-        verifiedAt: dish.verifiedAt ?? null,
-        expiresAt,
       })
     }
     if (!dishes.length) continue
+    const scoreMax = number(item.homeScoreMax, 1, Infinity) ?? 100
     restaurants.set(item.id, {
       id: item.id, name, zone, address: text(item.address), maps: httpsUrl(item.mapsUrl),
-      venueType: item.venueType === 'street_food' || item.venueType === 'restaurant' ? item.venueType : null,
+      venueType: item.venueType ?? null, specialty: localized(item.specialty), photo: httpsUrl(item.photoUrl),
       lat: number(item.latitude, -90, 90), lng: number(item.longitude, -180, 180),
-      score: number(item.homeScore, 0, 100),
+      score: number(item.homeScore, 0, scoreMax), scoreMax,
       budget: number(item.budgetPerPersonVnd, 1, 10_000_000),
       capacity: number(item.maxGroupSize, 1, 1000),
+      hours: Array.isArray(item.hours) ? item.hours.filter(day => Number.isInteger(day?.day) && day.day >= 0 && day.day <= 6
+        && (day.status === 'closed' || (day.status === 'parsed' && Array.isArray(day.intervals) && day.intervals.length
+          && day.intervals.every(slot => Number.isInteger(slot?.start) && Number.isInteger(slot?.end)
+            && slot.start >= 0 && slot.start < 1440 && slot.end > slot.start && slot.end <= 2880)))) : [],
       issues: Array.isArray(item.recurringIssues) ? item.recurringIssues.map(localized).filter(issue => label(issue)).slice(0, 8) : [],
       dishes,
     })
@@ -97,11 +94,9 @@ export function catalogClient(url, token) {
       throw new Error('HOME_CATALOG_URL must use HTTPS outside loopback')
     }
   }
-  let cache
   let request
   return async () => {
     if (!url) return { status: 'unconnected', restaurants: [] }
-    if (cache?.expiresAt > Date.now()) return cache.value
     request ??= (async () => {
       try {
         const response = await fetch(url, {
@@ -109,13 +104,7 @@ export function catalogClient(url, token) {
           redirect: 'error', signal: AbortSignal.timeout(6000),
         })
         if (!response.ok) throw new Error('HOME Reviews unavailable')
-        const restaurants = approvedCatalog(await response.json())
-        const expiresAt = restaurants.flatMap(item => item.dishes).reduce(
-          (expiry, dish) => Math.min(expiry, dish.expiresAt), Date.now() + cacheDuration,
-        )
-        const value = { status: 'ready', restaurants }
-        cache = { expiresAt, value }
-        return value
+        return { status: 'ready', restaurants: homeCatalog(await response.json()) }
       } catch {
         return { status: 'unavailable', restaurants: [] }
       }
@@ -147,7 +136,9 @@ export function publicRestaurant(restaurant, dish, coordinates) {
   return {
     id: restaurant.id, name: restaurant.name, zone: restaurant.zone, address: restaurant.address,
     venueType: restaurant.venueType, distanceKm: Number.isFinite(distanceKm) ? distanceKm : null,
-    maps: restaurant.maps, score: restaurant.score, price: dish ? dish.price : restaurant.budget, issues: restaurant.issues,
+    specialty: restaurant.specialty, photo: restaurant.photo, hours: restaurant.hours,
+    maps: restaurant.maps, score: restaurant.score, scoreMax: restaurant.scoreMax, issues: restaurant.issues,
+    price: dish ? dish.price : restaurant.budget, maxPrice: dish?.maxPrice ?? null,
     mealSlotsKnown: dish ? dish.meals.length > 0 : null,
   }
 }
@@ -180,7 +171,7 @@ export function dailyCandidates(restaurants, meal, history, coordinates, exclude
       if (dish.meals.length && !dish.meals.includes(meal)) continue
       const group = groups.get(dish.id) ?? { dish, places: [] }
       const distanceKm = distance(coordinates, restaurant)
-      const quality = (restaurant.score ?? 0) / 8 - restaurant.issues.length * 1.3
+      const quality = (restaurant.score ?? 0) / restaurant.scoreMax * 12.5 - restaurant.issues.length * 1.3
       const score = quality - (Number.isFinite(distanceKm) ? distanceKm * 0.35 : 0)
       group.places.push({ restaurant, dish, score })
       groups.set(dish.id, group)
@@ -218,6 +209,6 @@ export function groupCandidates(restaurants, party, budget, wish = '', coordinat
     }).sort((a, b) => Number(a.total == null) - Number(b.total == null)
       || b.rank - a.rank
       || Number(a.score == null) - Number(b.score == null)
-      || (a.score != null && b.score != null ? b.score - a.score : 0)
+      || (a.score != null && b.score != null ? b.score / b.scoreMax - a.score / a.scoreMax : 0)
       || a.id.localeCompare(b.id)).slice(0, 12)
 }
