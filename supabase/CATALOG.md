@@ -14,6 +14,6 @@ La RPC renvoie les champs d’affichage uniquement. Les invitations, comptes, me
 
 ## Déploiement partagé
 
-La migration `20261127004214_helpeat_live_home_catalog.sql` remplace la lecture du catalogue Helpeat après les migrations HOME Reviews de classification et les migrations Helpeat `20261125014237` et `20261125051559`. Appliquer d’abord cette migration dans le projet `ihuztjkblywzjdruusdj`, puis publier le frontend Pages. La branche d’alignement HOME Reviews contient les mêmes versions des migrations Helpeat pour les prochains déploiements de schéma. [Historique partagé HOME Reviews](https://github.com/ngpcao-spec/home-reviews-demo/tree/codex/helpeat-home-catalog-history)
+La migration `20261127005140_helpeat_live_home_catalog.sql` remplace la lecture du catalogue Helpeat après les migrations HOME Reviews de classification et les migrations Helpeat `20261125014237` et `20261125051559`. Appliquer d’abord cette migration dans le projet `ihuztjkblywzjdruusdj`, puis publier le frontend Pages. La branche d’alignement HOME Reviews contient les mêmes versions des migrations Helpeat pour les prochains déploiements de schéma. [Historique partagé HOME Reviews](https://github.com/ngpcao-spec/home-reviews-demo/tree/codex/helpeat-home-catalog-history)
 
 `npm test` vérifie les associations actives, les mises à jour depuis HOME Reviews, les champs facultatifs et la projection. Le workflow Supabase isolé contrôle la lecture par deux sessions Auth et l’isolation des données.
