@@ -64,6 +64,7 @@ function readRestaurants(items) {
         meals: Array.isArray(dish.meals) ? dish.meals.filter(meal => meals.has(meal)) : [],
         price, maxPrice: price == null ? null : number(dish.maxPriceVnd, price, Infinity),
         image: httpsUrl(dish.imageUrl),
+        imageSource: dish.imageSource === 'ai_generated' ? 'ai_generated' : null,
       })
     }
     if (!dishes.length) continue
@@ -182,7 +183,7 @@ export function dailyCandidates(restaurants, meal, history, coordinates, exclude
     const habit = historyWeight(history, dish, meal)
     const { restaurant, dish: recommendedDish, score } = places[0]
     return {
-      id: dish.id, name: dish.name, family: dish.family, image: recommendedDish.image,
+      id: dish.id, name: dish.name, family: dish.family, image: recommendedDish.image, imageSource: recommendedDish.imageSource,
       restaurants: places.map(place => publicRestaurant(place.restaurant, place.dish, coordinates)),
       score: score + Math.min(habit, 8) + (habit === 0 ? 2 : 0),
       familiar: habit > 0,

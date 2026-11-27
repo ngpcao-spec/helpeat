@@ -53,6 +53,20 @@ test('confirmed meals affect the profile and unknown group suitability is kept d
   assert.equal(groupCandidates(catalog, 4, 400_000, '')[0].total, 400_000)
 })
 
+test('a shared illustrative image passes through the catalogue without changing the candidates', () => {
+  const imageUrl = 'https://fixture.supabase.co/storage/v1/object/public/dish-images/pho.webp'
+  const illustrated = { ...payload, restaurants: payload.restaurants.map(place => ({
+    ...place, dishes: place.dishes.map(dish => dish.id === 'pho'
+      ? { ...dish, imageUrl, imageSource: 'ai_generated' } : dish),
+  })) }
+  const normal = dailyCandidates(homeCatalog(payload), 'lunch', [])
+  const amended = dailyCandidates(homeCatalog(illustrated), 'lunch', [])
+  assert.deepEqual(amended.map(x => x.id), normal.map(x => x.id))
+  assert.equal(amended.find(x => x.id === 'pho').image, imageUrl)
+  assert.equal(amended.find(x => x.id === 'pho').imageSource, 'ai_generated')
+  assert.equal(amended.find(x => x.id === 'rice').image, '')
+})
+
 test('old publication fields and unknown service slots do not gate active dishes', () => {
   const recent = { ...pho, meals: [], status: 'proposed' }
   const candidate = { ...address, dishes: [

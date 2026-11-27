@@ -38,6 +38,10 @@ before(async () => {
   await db.exec(await read('../supabase/migrations/20261125014237_helpeat_home_catalog.sql'))
   await db.exec(await read('../supabase/migrations/20261125051559_helpeat_street_food_catalog.sql'))
   await db.exec(await read('../supabase/migrations/20261127005140_helpeat_live_home_catalog.sql'))
+  await db.exec(`create table private.dish_images(
+    dish_id uuid primary key,image_url text,image_source text,image_storage_path text);
+    alter table private.dish_images enable row level security;`)
+  await db.exec(await read('../supabase/migrations/20261127130412_helpeat_main_dish_images.sql'))
   await query('insert into auth.users (id) values ($1),($2),($3)', [owner, googleA, googleB])
   const [{ id: org }] = (await query('select id from public.organizations where created_by=$1', [owner])).rows
   await query("insert into private.dish_names values ($1,'Phở'),($2,'Bún'),($3,'Cơm')", [phoDish, bunDish, disabledDish])
@@ -95,6 +99,22 @@ test('published HOME classifications supply active dishes and optional facts to 
   assert.equal(catalog[1].capacity, null)
   assert.doesNotMatch(JSON.stringify(first), /organization_id|NEVER-EXPORT|calculation|verifiedAt|validUntil/)
   assert.equal((await query('select count(*)::int as n from private.helpeat_restaurant_publications')).rows[0].n, 0)
+})
+
+test('publishes one image URL for the same dish across menus, with null for missing images', async () => {
+  await db.exec('begin')
+  try {
+    await query("insert into private.restaurant_dishes (scope,dish_id,status,enabled) values ('shared:fixture',$1,'proposed',true)", [phoDish])
+    const url = 'https://fixture.supabase.co/storage/v1/object/public/dish-images/current.webp'
+    await query("insert into private.dish_images values ($1,$2,'ai_generated','NEVER-EXPORT')", [phoDish, url])
+    const value = await asRole('authenticated', googleClaims(googleA), readCatalog)
+    const rows = value.restaurants.flatMap(place => place.dishes)
+    assert.deepEqual(rows.filter(dish => dish.id === phoDish).map(dish => [dish.imageUrl, dish.imageSource]),
+      [[url, 'ai_generated'], [url, 'ai_generated']])
+    assert.deepEqual(rows.filter(dish => dish.id === bunDish).map(dish => [dish.imageUrl, dish.imageSource]),
+      [[null, null]])
+    assert.doesNotMatch(JSON.stringify(value), /NEVER-EXPORT|image_storage_path/)
+  } finally { await db.exec('rollback') }
 })
 
 test('the next read follows source changes and active dishes while a queued run is pending', async () => {

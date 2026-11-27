@@ -170,15 +170,17 @@ function currentMeal() {
     + '</aside>'
 }
 
-function suggestionMedia(dish, restaurant) {
+function suggestionMedia(dish, restaurant, detail = false) {
   const image = dish.image || restaurant.photo
   const backup = dish.image && restaurant.photo !== dish.image ? restaurant.photo : ''
-  return '<div class="suggestion-media"><div class="suggestion-thumbnail">'
+  const illustrated = Boolean(dish.image && dish.imageSource === 'ai_generated')
+  return '<div class="suggestion-media' + (detail ? ' detail-dish-media' : '') + '"><div class="suggestion-thumbnail">'
     + '<span class="dish-placeholder" aria-hidden="true">' + icon('bowl') + '</span>'
     + (image ? '<img class="suggestion-image" src="' + esc(image) + '" alt="" loading="lazy" decoding="async"'
       + ' referrerpolicy="no-referrer"' + (backup ? ' data-backup="' + esc(backup) + '"' : '') + '>' : '')
-    + '</div>' + (restaurant.photo
-      ? '<small class="suggestion-photo-label"' + (dish.image ? ' hidden' : '') + '>' + t('restaurantPhoto') + '</small>' : '')
+    + '</div>' + (illustrated || restaurant.photo
+      ? '<small class="suggestion-photo-label"' + (dish.image && !illustrated ? ' hidden' : '') + '>'
+        + t(illustrated ? 'dishIllustration' : 'restaurantPhoto') + '</small>' : '')
     + '</div>'
 }
 
@@ -188,7 +190,10 @@ main.addEventListener('error', ({ target: image }) => {
   const backup = image.dataset.backup
   if (backup) {
     delete image.dataset.backup
-    if (label) label.hidden = false
+    if (label) {
+      label.textContent = t('restaurantPhoto')
+      label.hidden = false
+    }
     image.src = backup
   } else {
     if (label) label.hidden = true
@@ -277,7 +282,7 @@ function dishPage(id, addresses) {
   return '<a class="back" href="#' + (addresses ? 'dish/' + esc(id) : 'today') + '">' + icon('back') + t('back') + '</a>'
     + heading(addresses ? t('other') : name(dish.name), addresses ? name(dish.name) : t('best'), addresses ? 'pin' : 'bowl')
     + (addresses ? (alternatives.length ? alternatives.map(place => restaurantCard(place)).join('') : empty('pin', t('otherEmpty'), ''))
-      : (dish.image ? '<img class="detail-photo" src="' + esc(dish.image) + '" alt="">' : '') + restaurantCard(dish.restaurants[0])
+      : suggestionMedia(dish, dish.restaurants[0], true) + restaurantCard(dish.restaurants[0])
         + '<div class="action-row">' + button('confirm-dish', t('confirm'), 'check', 'primary',
           'data-id="' + esc(id) + '"' + (!state.session.demo && state.target.date > state.session.today ? ' disabled' : ''))
         + button('plan-dish', t('plan'), 'clock', 'secondary', 'data-id="' + esc(id) + '"')
