@@ -290,7 +290,7 @@ function dishPage(id, addresses) {
     + (addresses ? (alternatives.length ? alternatives.map(place => restaurantCard(place)).join('') : empty('pin', t('otherEmpty'), ''))
       : suggestionMedia(dish, dish.restaurants[0], true) + restaurantCard(dish.restaurants[0])
         + '<div class="action-row">' + button('confirm-dish', t('confirm'), 'check', 'primary',
-          'data-id="' + esc(id) + '"' + (!state.session.demo && state.target.date > state.session.today ? ' disabled' : ''))
+          'data-id="' + esc(id) + '"')
         + button('plan-dish', t('plan'), 'clock', 'secondary', 'data-id="' + esc(id) + '"')
         + '<a class="button secondary" href="#addresses/' + esc(id) + '">' + icon('pin') + t('other') + '</a></div>')
 }
@@ -543,7 +543,7 @@ function openEditor(target = state.target, entry = null, dishes = entry?.dishes,
   state.form = {
     date: entry?.date ?? (target.date > state.session.today ? state.session.today : target.date),
     meal: entry?.meal ?? target.meal, dishes: (dishes?.length ? dishes : [{ name: '' }]).map(dish => ({ ...dish })),
-    existing: entry, fromPhoto,
+    existing: entry, fromPhoto, addToMeal: target.addToMeal,
   }
   editorForm()
 }
@@ -607,14 +607,23 @@ async function refreshAfterMeal() {
 
 async function submitMeal() {
   readEditor()
-  const { date, meal, dishes, existing } = state.form
+  const { date, meal, dishes, existing, addToMeal } = state.form
   const complete = dishes.filter(dish => dish.name)
   if (!complete.length) throw new Error('addAtLeastOne')
   const known = state.journal?.entries.find(entry => entry.date === date && entry.meal === meal)
     ?? (state.daily?.entry?.date === date && state.daily.entry.meal === meal ? state.daily.entry : null)
-  if (known?.status === 'confirmed' && (existing?.date !== date || existing?.meal !== meal)
+  let toSave = complete
+  if (addToMeal) {
+    const journal = await api('journal?before=' + shiftDay(date, 1))
+    const recorded = journal.entries.find(entry => entry.date === date && entry.meal === meal && entry.status === 'confirmed')
+    if (recorded) {
+      const savedNames = new Set(recorded.dishes.map(dish => dish.name))
+      toSave = [...recorded.dishes, ...complete.filter(dish => !savedNames.has(dish.name))]
+    }
+    if (toSave.length > 12) throw new Error('invalid')
+  } else if (known?.status === 'confirmed' && (existing?.date !== date || existing?.meal !== meal)
       && !window.confirm(t('sameSlot'))) return
-  await api('meal', 'PUT', { date, meal, status: 'confirmed', dishes: complete })
+  await api('meal', 'PUT', { date, meal, status: 'confirmed', dishes: toSave })
   dialog.close()
   announce(t('saved'))
   await refreshAfterMeal()
@@ -674,6 +683,10 @@ async function action(element) {
     },
     'edit-current': () => openEditor(state.target, entry),
     'confirm-dish': () => {
+      if (state.target.date > state.session.today && !state.session.demo) {
+        openEditor({ date: state.session.today, meal: 'dinner', addToMeal: true }, null, chosen)
+        return
+      }
       const existing = entry?.dishes ?? []
       const dishes = existing.some(item => item.id === id || item.name === chosen[0].name) ? existing : [...existing, ...chosen]
       openEditor(state.target, entry, dishes.slice(0, 12))
