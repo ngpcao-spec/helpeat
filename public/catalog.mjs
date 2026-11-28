@@ -66,10 +66,26 @@ function readRestaurants(items, useMainDishImage = false) {
         price, maxPrice: price == null ? null : number(dish.maxPriceVnd, price, Infinity),
         image: httpsUrl(dish.imageUrl),
         imageSource: dish.imageSource === 'ai_generated' ? 'ai_generated' : null,
+        source: dish.source === 'manual' ? 'manual' : 'menu',
       })
     }
+    let specialty = localized(item.specialty)
+    let specialtySource = label(specialty) ? (item.specialtySource === 'manual' ? 'manual' : 'menu') : null
+    const inferred = useMainDishImage && !label(specialty) ? item.nameSpecialty : null
+    if (inferred?.source === 'restaurant_name' && typeof inferred.id === 'string' && key.test(inferred.id)) {
+      const inferredName = localized(inferred.name)
+      if (label(inferredName)) {
+        specialty = inferredName
+        specialtySource = 'restaurant_name'
+        if (!seen.has(inferred.id) && !dishes.some(dish => normalize(label(dish.name)) === normalize(label(inferredName)))) {
+          dishes.push({
+            id: inferred.id, name: inferredName, source: specialtySource,
+            family: '', meals: [], price: null, maxPrice: null, image: '', imageSource: null,
+          })
+        }
+      }
+    }
     if (!dishes.length) continue
-    const specialty = localized(item.specialty)
     // HOME Reviews publishes the active specialty first when it provides its name.
     const first = dishes[0]
     const mainDishImage = useMainDishImage && publishedDishes[0]?.enabled === true && publishedDishes[0].id === first.id
@@ -77,7 +93,7 @@ function readRestaurants(items, useMainDishImage = false) {
     const scoreMax = number(item.homeScoreMax, 1, Infinity) ?? 100
     restaurants.set(item.id, {
       id: item.id, name, zone, address: text(item.address), maps: httpsUrl(item.mapsUrl),
-      venueType: item.venueType ?? null, specialty, photo: httpsUrl(item.photoUrl), mainDishImage,
+      venueType: item.venueType ?? null, specialty, specialtySource, photo: httpsUrl(item.photoUrl), mainDishImage,
       lat: number(item.latitude, -90, 90), lng: number(item.longitude, -180, 180),
       score: number(item.homeScore, 0, scoreMax), scoreMax,
       budget: number(item.budgetPerPersonVnd, 1, 10_000_000),
@@ -143,7 +159,8 @@ export function publicRestaurant(restaurant, dish, coordinates) {
   return {
     id: restaurant.id, name: restaurant.name, zone: restaurant.zone, address: restaurant.address,
     venueType: restaurant.venueType, distanceKm: Number.isFinite(distanceKm) ? distanceKm : null,
-    specialty: restaurant.specialty, photo: restaurant.photo, hours: restaurant.hours,
+    specialty: restaurant.specialty, specialtySource: restaurant.specialtySource,
+    dishSource: dish?.source ?? null, photo: restaurant.photo, hours: restaurant.hours,
     maps: restaurant.maps, score: restaurant.score, scoreMax: restaurant.scoreMax, issues: restaurant.issues,
     price: dish ? dish.price : restaurant.budget, maxPrice: dish?.maxPrice ?? null,
     mealSlotsKnown: dish ? dish.meals.length > 0 : null,
@@ -212,7 +229,7 @@ export function groupCandidates(restaurants, party, budget, wish = '', coordinat
         ...publicRestaurant(restaurant, null, coordinates), capacity: restaurant.capacity,
         total: restaurant.budget == null ? null : restaurant.budget * party,
         rank: terms.filter(term => keywords.includes(term)).length * 5 - restaurant.issues.length * 8,
-        menu: restaurant.dishes.map(dish => dish.name).slice(0, 12),
+        menu: restaurant.dishes.filter(dish => dish.source !== 'restaurant_name').map(dish => dish.name).slice(0, 12),
       }
     }).sort((a, b) => Number(a.total == null) - Number(b.total == null)
       || b.rank - a.rank

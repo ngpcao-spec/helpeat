@@ -221,6 +221,7 @@ function dailySuggestions() {
     return '<a class="suggestion" href="#dish/' + esc(dish.id) + '">'
       + suggestionMedia(dish, first)
       + '<div class="suggestion-info"><h3>' + esc(name(dish.name)) + '</h3><p>' + esc(name(first.name)) + '</p>'
+      + (first.dishSource === 'restaurant_name' ? '<small>' + t('namedSpecialtyAvailability') + '</small>' : '')
       + (first.price == null ? '' : '<strong class="suggestion-price">' + esc(priceRange(first)) + '</strong>')
       + (dish.reason ? '<p class="suggestion-reason">' + esc(dish.reason) + '</p>' : '')
       + (realMode && first.score == null ? '<small>' + t('scoreUnavailable') + '</small>' : '') + demoTag() + '</div></a>'
@@ -262,6 +263,7 @@ function restaurantCard(place, isGroup = false) {
     + '<p>' + esc(location) + '</p>'
     + (place.venueType === 'street_food' ? '<p>' + t('streetFood') + '</p>' : '')
     + (specialty ? '<p>' + t('specialty') + ' · ' + esc(specialty) + '</p>' : '')
+    + (place.specialtySource === 'restaurant_name' ? '<p>' + t('namedSpecialtyAvailability') + '</p>' : '')
     + (realMode && place.score == null ? '<p>' + t('scoreUnavailable') + '</p>' : '') + demoTag() + '</div>'
     + (place.score == null ? '' : '<span class="score" title="' + t(state.session.demo ? 'demoScore' : 'score') + '">'
       + icon('star') + esc(place.score) + '/' + esc(place.scoreMax ?? 100) + '</span>') + '</div>'
