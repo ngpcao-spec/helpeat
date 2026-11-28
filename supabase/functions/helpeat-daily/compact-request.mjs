@@ -37,14 +37,15 @@ export function compactProviderRequest(context, restaurantIdsByDish, settings) {
     return {
       dish_id: alias, name: dish.name,
       ...withoutEmpty({ journal_exact_match: dish.journal_exact_match }),
-      restaurants: dish.restaurants.map(({ price_vnd, max_price_vnd, ...place }, i) => {
+      restaurants: dish.restaurants.map(({ price_vnd, max_price_vnd, dish_source, availability_verified, ...place }, i) => {
         const id = ids[i]
         if (!restaurantAliases.has(id)) {
           const restaurantId = 'r' + (restaurantAliases.size + 1)
           restaurantAliases.set(id, restaurantId)
           restaurants[restaurantId] = withoutEmpty(place)
         }
-        return { restaurant_id: restaurantAliases.get(id), ...withoutEmpty({ price_vnd, max_price_vnd }) }
+        return { restaurant_id: restaurantAliases.get(id),
+          ...withoutEmpty({ price_vnd, max_price_vnd, dish_source, availability_verified }) }
       }),
     }
   })

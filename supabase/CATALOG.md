@@ -4,6 +4,8 @@
 
 Lorsque HOME Reviews traite un nouveau menu, Helpeat continue de lire le dernier résultat publié. Les changements de type et les désactivations se reflètent à la lecture suivante. Les anciennes tables de décisions Helpeat restent en base pour l’historique. La lecture courante dépend uniquement des données HOME Reviews.
 
+Pour un établissement street food, la RPC expose aussi la proposition courante d’après l’enseigne dans `nameSpecialty`. Helpeat peut la suggérer dans la zone choisie, y compris en l’absence de menu, et affiche sa disponibilité non vérifiée. Le champ reste distinct des plats du menu et ne fournit ni prix ni variante. Une correction manuelle supplante cette proposition.
+
 ## Informations affichées
 
 - Nom, photo HTTPS du lieu et lien Google Maps à partir de l’établissement HOME Reviews. La fiche Google liée fournit la zone, l’adresse, les coordonnées et les horaires habituels lorsqu’ils sont disponibles. L’horaire habituel est informatif et le moteur de suggestion conserve son filtre géographique.
@@ -16,4 +18,6 @@ La RPC renvoie les champs d’affichage uniquement. Les invitations, comptes, me
 
 La migration `20261127005140_helpeat_live_home_catalog.sql` remplace la lecture du catalogue Helpeat après les migrations HOME Reviews de classification et les migrations Helpeat `20261125014237` et `20261125051559`. Appliquer d’abord cette migration dans le projet `ihuztjkblywzjdruusdj`, puis publier le frontend Pages. La branche d’alignement HOME Reviews contient les mêmes versions des migrations Helpeat pour les prochains déploiements de schéma. [Historique partagé HOME Reviews](https://github.com/ngpcao-spec/home-reviews-demo/tree/codex/helpeat-home-catalog-history)
 
-`npm test` vérifie les associations actives, les mises à jour depuis HOME Reviews, les champs facultatifs et la projection. Le workflow Supabase isolé contrôle la lecture par deux sessions Auth et l’isolation des données.
+La migration `20261128082830_helpeat_name_specialty_candidates.sql` suit les migrations des illustrations et du rattachement par adresse. Elle conserve le contrat de lecture V1 et ajoute la provenance. Le frontend et le worker quotidien utilisent ces champs, y compris dans le format compact.
+
+`node --test test/*.test.mjs` vérifie les associations actives, les mises à jour depuis HOME Reviews, les suggestions par zone et la priorité manuelle. Le workflow Supabase isolé contrôle la lecture par deux sessions Auth et l’isolation des données.

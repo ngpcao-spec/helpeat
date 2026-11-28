@@ -56,6 +56,8 @@ export function prepareRecommendationContext({ catalog, habits, meals, target, t
       journal_exact_match: lastSeen.get(normalize(label(dish.name))) ?? null,
       restaurants: places.map(place => ({
         name: label(place.name), specialty: label(place.specialty) ?? null,
+        ...(place.dishSource === 'restaurant_name' ? { dish_source: 'restaurant_name', availability_verified: false } : {}),
+        ...(place.specialtySource === 'restaurant_name' ? { specialty_source: 'restaurant_name' } : {}),
         distance_km: place.distanceKm == null ? null : Math.round(place.distanceKm),
         price_vnd: place.price, max_price_vnd: place.maxPrice,
         home_reviews_score: place.score == null ? null : { value: place.score, scale_max: place.scoreMax },

@@ -2,8 +2,11 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { after, before, test } from 'node:test'
 import { PGlite } from '@electric-sql/pglite'
-import { homeCatalog } from '../public/catalog.mjs'
+import { dailyCandidates, homeCatalog, inArea } from '../public/catalog.mjs'
 import { createRealApi } from '../public/supabase.mjs'
+import { prepareRecommendationContext, recommendationContext } from '../supabase/functions/helpeat-daily/recommendation.mjs'
+import { compactProviderRequest } from '../supabase/functions/helpeat-daily/compact-request.mjs'
+import { translations } from '../public/copy.mjs'
 
 const read = path => readFile(new URL(path, import.meta.url), 'utf8')
 const owner = 'aaaaaaaa-0000-4000-8000-000000000001'
@@ -42,6 +45,8 @@ before(async () => {
     dish_id uuid primary key,image_url text,image_source text,image_storage_path text);
     alter table private.dish_images enable row level security;`)
   await db.exec(await read('../supabase/migrations/20261127132027_helpeat_main_dish_images.sql'))
+  await db.exec(await read('../supabase/migrations/20261128080836_helpeat_resolve_zone_from_saved_address.sql'))
+  await db.exec(await read('../supabase/migrations/20261128082830_helpeat_name_specialty_candidates.sql'))
   await query('insert into auth.users (id) values ($1),($2),($3)', [owner, googleA, googleB])
   const [{ id: org }] = (await query('select id from public.organizations where created_by=$1', [owner])).rows
   await query("insert into private.dish_names values ($1,'Phở'),($2,'Bún'),($3,'Cơm')", [phoDish, bunDish, disabledDish])
@@ -101,6 +106,34 @@ test('published HOME classifications supply active dishes and optional facts to 
   assert.equal((await query('select count(*)::int as n from private.helpeat_restaurant_publications')).rows[0].n, 0)
 })
 
+test('uses the verified zone for a saved address when the venue has no place profile', async () => {
+  await db.exec('begin')
+  try {
+    await query("update private.google_place_profiles set profile=$2 where establishment_id=$1", [places[0], {
+      identity: { cid: 'cid0', place_id: 'Fixture0', city: 'Khánh Hòa',
+        address: '32 Cửu Long, Nha Trang, Khánh Hòa 650000, Việt Nam' },
+    }])
+    await query("delete from private.google_place_profiles where establishment_id=$1", [places[1]])
+    const setAddress = address => query('update public.establishments set address=$2 where id=$1',
+      [places[1], address])
+    const catalogue = async () => homeCatalog(await asRole('authenticated', googleClaims(googleA), readCatalog))
+    await setAddress('42 Huỳnh Thúc Kháng, Nha Trang, Khanh Hoa 650000, Việt Nam')
+    const restaurants = await catalogue()
+    assert.deepEqual(restaurants.map(place => [place.id, place.zone]),
+      [[places[0], 'Khánh Hòa'], [places[1], 'Khánh Hòa']])
+    assert.deepEqual(new Set(dailyCandidates(inArea(restaurants, 'Khanh Hoa'), 'lunch', []).map(dish => dish.id)),
+      new Set([phoDish, bunDish]))
+    assert.deepEqual(inArea(restaurants, 'An Giang'), [])
+    assert.equal(restaurants[1].lat, null)
+    assert.equal(restaurants[1].lng, null)
+
+    await setAddress('42 Huỳnh Thúc Kháng, Nha Trang, Khánh Hòa 650000, France')
+    assert.equal((await catalogue())[1].zone, '')
+    await setAddress('42 Huỳnh Thúc Kháng, Nha Trang, Province sans profil, Việt Nam')
+    assert.equal((await catalogue())[1].zone, '')
+  } finally { await db.exec('rollback') }
+})
+
 test('publishes one image URL for the same dish across menus, with null for missing images', async () => {
   await db.exec('begin')
   try {
@@ -139,6 +172,58 @@ test('catalog access needs a verified Google claim and readers cannot read or ed
     await assert.rejects(query('update private.restaurant_dishes set enabled=true'), { code: '42501' })
     assert.deepEqual((await query('select * from public.establishments')).rows, [])
   })
+})
+
+test('HOME name proposals without a menu are eligible in their zone and respect manual decisions', async () => {
+  await db.exec('begin')
+  try {
+    const scope = 'establishment:' + places[0]
+    await query("update public.establishments set name='Bánh Xèo An',active=true where id=$1", [places[0]])
+    await query(`update private.menu_dish_ai_targets set source_run=null,published_source_run=null,
+      run_id=$2,published_id=$2 where scope=$1`, [scope, runs[0]])
+    await query("update private.restaurant_dish_profiles set specialty_id=null where scope=$1", [scope])
+    await query("update private.restaurant_dishes set enabled=false where scope=$1", [scope])
+    await query("update private.menu_dish_ai_runs set result=$2 where id=$1", [runs[0], {
+      restaurant_type: {value: 'street_food'},
+      nameSpecialtyProposal: {name: 'Bánh Xèo', nameEvidence: 'Bánh Xèo', menuContext: 'absent'},
+    }])
+    const payload = await asRole('authenticated', googleClaims(googleA), readCatalog)
+    const place = payload.restaurants.find(item => item.id === places[0])
+    assert.deepEqual(place.dishes, [])
+    assert.equal(place.specialty, null)
+    assert.match(place.nameSpecialty.id, /^name-[a-f0-9]{64}$/)
+    assert.deepEqual([place.nameSpecialty.name, place.nameSpecialty.source], ['Bánh Xèo','restaurant_name'])
+    const input = { catalog: payload, target: {meal: 'lunch'}, today: '2026-11-28', zone: 'Da Nang', meals: [], locale: 'fr' }
+    const [candidate] = recommendationContext(input).candidates
+    assert.equal(candidate.dish_id, place.nameSpecialty.id)
+    assert.deepEqual(candidate.restaurants.map(row => [row.dish_source,row.availability_verified,row.price_vnd,row.max_price_vnd]),
+      [['restaurant_name',false,null,null]])
+    const prepared = prepareRecommendationContext(input)
+    const compact = compactProviderRequest(prepared.context, prepared.restaurantIdsByDish, {
+      model: 'gpt-6.1-terra', effort: 'high',
+    })
+    const sent = JSON.parse(compact.body.input).candidates[0].restaurants[0]
+    assert.equal(sent.dish_source, 'restaurant_name')
+    assert.equal(sent.availability_verified, false)
+    assert.equal(sent.price_vnd, undefined)
+    assert.ok(recommendationContext({...input,zone:'Hà Nội'}).candidates.every(row => row.dish_id !== candidate.dish_id))
+    assert.equal(translations.fr.namedSpecialtyAvailability, 'Spécialité indiquée par le nom du restaurant — disponibilité non vérifiée')
+    assert.match(translations.vi.namedSpecialtyAvailability, /chưa xác minh/)
+    const entry = { meal_date: '2026-11-28', meal_slot: 'lunch', status: 'planned', helpeat_meal_items: [] }
+    const builder = { eq: () => builder, select: () => builder, maybeSingle: async () => ({data: entry}) }
+    const rpc = async name => ({data: name === 'helpeat_catalog' ? await asRole('authenticated', googleClaims(googleA), readCatalog) : null})
+    const { api } = createRealApi({}, 'https://example.test/helpeat/', { rpc, from: () => builder })
+    const daily = await api('today','POST',{ date: entry.meal_date, meal: 'lunch', zone: 'Da Nang' })
+    assert.equal(daily.suggestions[0].restaurants[0].dishSource, 'restaurant_name')
+    assert.equal(daily.suggestions[0].restaurants[0].specialtySource, 'restaurant_name')
+    const outing = await api('outing','POST',{ zone: 'Da Nang', party: 2, budget: 120000 })
+    assert.deepEqual(outing.suggestions[0].menu, [])
+    await query("update private.restaurant_dishes set enabled=true,origin='manual' where scope=$1 and dish_id=$2", [scope,phoDish])
+    await query("update private.restaurant_dish_profiles set specialty_id=$2,specialty_origin='manual' where scope=$1", [scope,phoDish])
+    const updated = (await asRole('authenticated', googleClaims(googleA), readCatalog)).restaurants.find(item => item.id === places[0])
+    assert.deepEqual([updated.specialty,updated.specialtySource,updated.nameSpecialty], ['Phở','manual',null])
+    assert.deepEqual(updated.dishes.map(dish => dish.source), ['manual'])
+  } finally { await db.exec('rollback') }
 })
 
 test('the real frontend API filters by meal and zone, ranks confirmed habits and refreshes withdrawn places', async () => {
